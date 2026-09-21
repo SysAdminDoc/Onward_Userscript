@@ -493,8 +493,11 @@ test('the default pages to stay off, and the host list', () => {
   // The pattern Onward ships with, not a copy of it.
   const skip = (path) => O.pathSkipped(O.DEFAULTS.skipPaths, path);
   for (const path of ['/checkout', '/checkout/step-2', '/cart', '/Cart/', '/basket.php', '/login', '/log-in', '/login.php', '/users/sign_in', '/signin', '/SignUp',
-    '/register', '/account', '/account/orders', '/account/settings', '/my-account/', '/password/reset']) assert.ok(skip(path), path);
-  // Whole segments only: a listing about the word isn't that page.
+    '/register', '/account', '/account/orders', '/account/settings', '/my-account/', '/password/reset',
+    // Named pages, as shop and CMS engines write them (Salesforce Commerce, Django, Plone).
+    '/on/demandware.store/Sites-Shop-Site/en_US/Cart-Show', '/Checkout-Begin', '/Login-Show', '/Account-Show',
+    '/accounts/password_reset/', '/login_form', '/checkout-step-2', '/account-settings']) assert.ok(skip(path), path);
+  // A listing about the word isn't that page.
   for (const path of ['/', '/blog/page/2/', '/cartoons/page/3', '/accounts/list', '/forum/tips-for-login', '/registered-users?page=2', '/passwords-101',
     '/questions/tagged/login-page', '/topics/password-manager', '/tag/account-security/page/2/', '/category/cart-accessories/page/3', '/r/signup_bonuses/'])
     assert.ok(!skip(path), path);

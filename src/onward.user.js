@@ -49,8 +49,9 @@
     runOn: 'all',          // all | listed (only the hosts in allowHosts)
     allowHosts: [],
     // Pages Onward stays off: appending pages broke checkout and account flows for other auto-pagers.
-    // Whole path segments ("/login.php" and "/my-account/" too), so a listing about the word ("/tag/account-security") isn't one.
-    skipPaths: '/(my[-_]?)?(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/.]|$)',
+    // A path part that starts with one of these words ("/login.php", "/Cart-Show", "/my-account/",
+    // "/password_reset/"), unless the path runs through a listing ("/tag/account-security" lists posts).
+    skipPaths: '^(?!.*/(tags?|topics?|categor(y|ies)|tagged|labels?|r)/).*/(my[-_]?)?(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/._-]|$)',
     disabledHosts: [],
     exclude: [
       'mail.google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
