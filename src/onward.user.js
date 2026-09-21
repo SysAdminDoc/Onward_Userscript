@@ -76,7 +76,7 @@
   };
   // How rule lists are stored now: packed, indexed by host, general rules apart.
   // An older form is refreshed on the next page load instead of a week later.
-  const LIST_FORMAT = 2;
+  const LIST_FORMAT = 3;
 
   // The async GM.* API, where a manager offers only that (Userscripts for Safari).
   const gm4 = () => (typeof GM === 'object' && GM && typeof GM.getValue === 'function' ? GM : null);
@@ -2478,25 +2478,37 @@
   };
   const listCount = (e) => (e ? (e.count != null ? e.count : (e.rules || []).length) : 0);
 
+  // A big list's host rules go in up to this many buckets, about 400 rules each,
+  // so a page on a site with a rule unpacks one; a small list keeps them in one.
+  const BUCKETS = 8;
+  const bucketOf = (host, count) => {
+    let h = 0;
+    for (let i = 0; i < host.length; i++) h = (Math.imul(h, 31) + host.charCodeAt(i)) >>> 0;
+    return h % count;
+  };
+
   /**
    * A rule list as stored (catch-alls, which are never used, left out). Plain
    * text a page can search without unpacking anything: a line per host
-   * ("\nexample.com 0,1a", rule numbers in base 36), and the other, general
-   * rules' patterns with the text every match of each needs. The rules
-   * themselves are packed in two parts, so a page only a general rule matches
-   * (any .com address, say) unpacks the small one.
+   * ("\nexample.com 3.0,5.1a": each of its rules as bucket.number, the number
+   * in base 36), and the other, general rules' patterns with the text every
+   * match of each needs. The rules themselves are packed apart: the host
+   * rules in buckets, so a page on a site with a rule unpacks one bucket, and
+   * the general ones on their own, so a page only they match (any .com
+   * address, say) unpacks just them.
    */
   async function buildListEntry(rules, at) {
     const byHost = {};
-    const hosted = [];
+    const kept = rules.filter((r) => !catchAll(r)).map((r) => [r, literalHosts(r.url)]);
+    const count = Math.min(BUCKETS, Math.max(1, Math.round(kept.filter(([, hs]) => hs).length / 400)));
+    const buckets = Array.from({ length: count }, () => []);
     const generic = [];
     const general = [];
-    for (const r of rules) {
-      if (catchAll(r)) continue;
-      const hs = literalHosts(r.url);
+    for (const [r, hs] of kept) {
       if (hs) {
-        const n = (hosted.push(slimRule(r)) - 1).toString(36);
-        for (const h of hs) (byHost[h] = byHost[h] || []).push(n);
+        const b = bucketOf(hs[0], count);
+        const ref = b + '.' + (buckets[b].push(slimRule(r)) - 1).toString(36);
+        for (const h of hs) (byHost[h] = byHost[h] || []).push(ref);
       } else {
         // Its pattern is kept in plain text already.
         const { url, ...rest } = slimRule(r);
@@ -2505,8 +2517,11 @@
     }
     let hosts = '\n';
     for (const h of Object.keys(byHost)) hosts += h + ' ' + byHost[h].join(',') + '\n';
-    return { at, count: rules.length, hosts, generic, rules: await packJSON(hosted), general: await packJSON(general) };
+    return { at, count: rules.length, hosts, generic, buckets: await Promise.all(buckets.map(packJSON)), general: await packJSON(general) };
   }
+
+  /** A list entry this version can read without the network: packed, in buckets or (the previous form) in one. */
+  const listPacked = (e) => !!e && (Array.isArray(e.buckets) || typeof e.rules === 'string');
 
   const testUrl = (pattern, href) => {
     try { return new RegExp(pattern).test(href); } catch (e) { return false; }
@@ -2530,15 +2545,17 @@
         for (const r of entry.rules) general.push(Object.assign({}, r, { source }));
         continue;
       }
-      if (typeof entry.hosts !== 'string' || typeof entry.rules !== 'string') continue;
+      if (typeof entry.hosts !== 'string' || !listPacked(entry)) continue;
       const at = entry.hosts.indexOf('\n' + host + ' ');
-      const mine = at < 0 ? [] : entry.hosts.slice(at + host.length + 2, entry.hosts.indexOf('\n', at + 1)).split(',').map((n) => parseInt(n, 36));
+      const mine = at < 0 ? [] : entry.hosts.slice(at + host.length + 2, entry.hosts.indexOf('\n', at + 1)).split(',');
       const maybe = (entry.generic || []).filter(([, lit, url]) => (!lit || href.includes(lit)) && testUrl(url, href));
       if (!mine.length && !maybe.length) continue;
       const blank = { name: '', insert: '', mode: '', click: false, excludeUrl: '' };
-      if (mine.length) {
-        const rules = await unpackOnce(entry.rules);
-        for (const i of mine) bucket.push(Object.assign({}, blank, rules[i], { source }));
+      for (const ref of mine) {
+        // "3.1a" is rule 1a of bucket 3; an entry stored in one pack has just the number.
+        const dot = ref.indexOf('.');
+        const rules = await unpackOnce(dot < 0 ? entry.rules : entry.buckets[Number(ref.slice(0, dot))]);
+        bucket.push(Object.assign({}, blank, rules[parseInt(ref.slice(dot + 1), 36)], { source }));
       }
       if (maybe.length) {
         // An entry from before the general rules were packed apart numbers them among all the rules.
@@ -2674,10 +2691,9 @@
       store.set('sourceCache', cache);
       // 0.1.0 kept every list's rules flattened. That copy goes once every list
       // has a packed one, and not before: a failed refresh must not lose them.
-      if (urls.every((u) => cache[u] && typeof cache[u].rules === 'string')) {
-        store.set('sourceRules', []);
-        store.set('sourcesFormat', LIST_FORMAT);
-      }
+      if (urls.every((u) => listPacked(cache[u]))) store.set('sourceRules', []);
+      // Only when every list is in this version's form; a list whose refresh failed is tried again next time.
+      if (urls.every((u) => cache[u] && Array.isArray(cache[u].buckets))) store.set('sourcesFormat', LIST_FORMAT);
       forgetListRules();
       if (failures.length) toast('Kept the last good copy of a rule list. ' + failures.join('; '), 'err');
       else store.set('sourcesUpdated', Date.now());

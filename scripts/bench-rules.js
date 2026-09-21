@@ -1,8 +1,8 @@
 // What a wedata-sized rule list costs Onward: how much it stores, and what a page pays to use it.
 //   npm run bench -- path/to/items_all.json
 // Get the list from http://wedata.net/databases/AutoPagerize/items_all.json (about 2.4 MB).
-// Exits non-zero if the stored list is 350 KB or more, an unmatched address takes 0.5 ms or more, or a
-// .com address that only general rules match takes 2 ms or more the first time.
+// Exits non-zero if the stored list is 350 KB or more, an unmatched address takes 0.5 ms or more, a
+// .com address that only general rules match takes 2 ms or more the first time, or a site with a rule 3 ms.
 const fs = require('fs');
 const O = require('../src/onward.user.js');
 
@@ -54,7 +54,8 @@ async function timed(fn, runs) {
   for (const [k, v] of rows) console.log(k.padEnd(40), v);
   const matchMs = await warm(unmatched);
   const generalMs = await cold(generalOnly);
-  const ok = stored < 350 * 1024 && matchMs < 0.5 && generalMs < 2;
-  console.log(ok ? '\nWithin budget: under 350 KB stored, under 0.5 ms to match an unmatched address, under 2 ms for a .com page.' : '\nOver budget.');
+  const matchedMs = await cold(matched);
+  const ok = stored < 350 * 1024 && matchMs < 0.5 && generalMs < 2 && matchedMs < 3;
+  console.log(ok ? '\nWithin budget: under 350 KB stored, under 0.5 ms to match an unmatched address, under 2 ms for a .com page, under 3 ms for a site with a rule.' : '\nOver budget.');
   process.exit(ok ? 0 : 1);
 })();

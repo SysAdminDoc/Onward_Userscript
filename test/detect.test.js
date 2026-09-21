@@ -724,9 +724,12 @@ test('rule lists: a page looks up its host and only the other rules its address 
   O.forgetListRules();
   const entry = await O.buildListEntry(rules, 5);
   assert.equal(entry.count, 5, 'the count covers the whole list');
-  assert.equal(entry.hosts, '\nexample.com 0,1\nother.com 2\n', 'a line per host');
+  const lines = entry.hosts.split('\n').filter(Boolean).map((l) => l.split(' '));
+  assert.deepEqual(lines.map(([h, refs]) => [h, refs.split(',').length]), [['example.com', 2], ['other.com', 1]], 'a line per host');
+  assert.ok(lines.every(([, refs]) => refs.split(',').every((r) => /^0\.[0-9a-z]+$/.test(r))), 'each rule as bucket.number; a small list has one bucket');
   assert.deepEqual(entry.generic.map((g) => g[1]), ['.blogspot.com/'], 'the catch-all is left out; the other keeps the text it needs');
-  assert.equal((await O.unpackJSON(entry.rules)).length, 3, 'the rules indexed by host');
+  assert.equal(entry.buckets.length, 1);
+  assert.equal((await Promise.all(entry.buckets.map(O.unpackJSON))).flat().length, 3, 'the rules indexed by host');
   assert.equal((await O.unpackJSON(entry.general)).length, 1, 'the general one, packed apart');
   const cache = { 'https://lists.example/one.json': entry };
   const at = async (href) => (await O.listRulesFor(cache, href)).map((r) => r.next);
@@ -750,13 +753,27 @@ test('rule lists: a page only a general rule matches never unpacks the rules ind
   O.forgetListRules();
   const entry = await O.buildListEntry(rules, 5);
   // Proof it's never read: a host pack that can't be unpacked.
-  const cache = { list: Object.assign({}, entry, { rules: 'j:{broken' }) };
+  const cache = { list: Object.assign({}, entry, { buckets: entry.buckets.map(() => 'j:{broken') }) };
   const found = await O.listRulesFor(cache, 'https://shop.unlisted.com/list?page=2');
   assert.deepEqual(found.map((r) => [r.url, r.next, r.content, r.source]), [['^https?://(www\\.)?.+\\.com/', 'a.g', '.y', 'list']]);
   // An entry from before the split (one pack, general rules numbered among all) still reads.
   O.forgetListRules();
   const old = { list: { at: 1, count: 2, hosts: '\nexample.com 0\n', generic: [[1, '.com/', rules[1].url]], rules: await O.packJSON(rules.map((r) => ({ url: r.url, next: r.next, content: r.content }))) } };
   assert.deepEqual((await O.listRulesFor(old, 'https://example.com/a')).map((r) => r.next), ['a.m', 'a.g']);
+});
+
+test('rule lists: a page on a site with a rule unpacks only that rule\'s bucket', async () => {
+  // A big list: 3,200 site rules make eight buckets.
+  const rules = O.normalizeRules(Array.from({ length: 3200 }, (_, i) => ({ url: `^https://site${i}\\.example/`, next: 'a.n' + i })), { fromList: true });
+  O.forgetListRules();
+  const entry = await O.buildListEntry(rules, 1);
+  assert.equal(entry.buckets.length, 8);
+  const line = entry.hosts.split('\n').find((l) => l.startsWith('site7.example '));
+  const b = Number(line.split(' ')[1].split('.')[0]);
+  // Every other bucket can't be unpacked: a lookup that touched one would throw.
+  const cache = { list: Object.assign({}, entry, { buckets: entry.buckets.map((x, i) => (i === b ? x : 'j:{broken')) }) };
+  assert.deepEqual((await O.listRulesFor(cache, 'https://site7.example/p')).map((r) => r.next), ['a.n7']);
+  assert.ok(new Set(entry.hosts.split('\n').filter(Boolean).map((l) => l.split(' ')[1].split('.')[0])).size > 1, 'the rules are spread over buckets');
 });
 
 test('rules 0.1.0 kept flattened are only tested while some list has no copy of its own', async () => {

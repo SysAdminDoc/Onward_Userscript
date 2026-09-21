@@ -1480,7 +1480,7 @@ test('only one tab refreshes the rule lists at a time', async () => {
   assert.equal(site.hits.rules, 1, 'the list was fetched once');
   assert.match(await b.evaluate(onwardText), /Another tab is updating/);
   assert.equal(stored.sourceCache[list].count, 2, 'stored packed, with its count');
-  assert.equal(typeof stored.sourceCache[list].rules, 'string', 'packed');
+  assert.ok(Array.isArray(stored.sourceCache[list].buckets), 'packed');
   assert.deepEqual(stored.sourceRules, [], 'no flattened copy');
   assert.ok(stored.sourcesUpdated > 0, 'marked fresh');
   assert.equal(stored.sourcesLock, 0, 'lock released');
@@ -1990,9 +1990,9 @@ test('right after an update from 0.1.0, the rule lists are fetched again so thei
   await pg.waitForFunction((l) => ((JSON.parse(localStorage.getItem('__gm')).sourceCache || {})[l] || {}).count > 0, list, { timeout: 10000 });
   const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
   assert.equal(site.hits.rules, 1, 'fetched now, once');
-  assert.equal(typeof stored.sourceCache[list].rules, 'string', 'stored packed');
+  assert.ok(Array.isArray(stored.sourceCache[list].buckets), 'stored packed');
   assert.deepEqual(stored.sourceRules, [], 'the flattened copy is gone');
-  assert.equal(stored.sourcesFormat, 2, 'and marked as stored the current way');
+  assert.equal(stored.sourcesFormat, 3, 'and marked as stored the current way');
   await ctx.close();
 });
 
@@ -2000,7 +2000,7 @@ test('a page that uses no rule list never reads the stored lists, and a changed 
   const { pg, ctx } = await open('/blog?page=1', (b) => {
     const list = b + '/rules.json?mode=good';
     window.__gm = {
-      exclude: ['127.0.0.1'], sources: [list], sourcesFormat: 2, sourcesTried: Date.now() - 7 * 36e5, sourcesUpdated: Date.now() - 864e5,
+      exclude: ['127.0.0.1'], sources: [list], sourcesFormat: 3, sourcesTried: Date.now() - 7 * 36e5, sourcesUpdated: Date.now() - 864e5,
       sourceCache: { [list]: { at: 1, count: 1, hosts: '\nkeep1.example 0\n', generic: [], rules: 'j:[{"url":"^https://keep1\\\\.example/","next":"a.n"}]', general: 'j:[]' } },
     };
   }, base);
