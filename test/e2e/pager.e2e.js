@@ -1531,6 +1531,68 @@ test('"Load 5 more pages" pressed while a page is loading waits for it, then car
   await ctx.close();
 });
 
+const statusText = () => document.querySelector('[data-onward-status]')?.shadowRoot.querySelector('[role="status"]').textContent || '';
+
+test('screen readers hear pages load, and the end', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
+  await pg.waitForFunction(() => /^Page [23] loaded, 5 items\.$/.test(document.querySelector('[data-onward-status]')?.shadowRoot.querySelector('[role="status"]').textContent || ''));
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  await pg.waitForTimeout(200);
+  assert.equal(await pg.evaluate(statusText), 'No more pages.');
+  assert.equal(await pg.evaluate(() => document.querySelector('[data-onward-status]').hasAttribute('data-onward')), false, 'not counted as a page bar');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('the settings panel passes axe, and focus goes in and comes back', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await pg.evaluate(() => document.querySelector('a[href="/post/1"]').focus());
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  assert.equal(await pg.evaluate(() => document.querySelector('[data-onward-panel]').shadowRoot.activeElement?.getAttribute('data-k')), 'threshold', 'focus moved into the dialog');
+  assert.equal(await pg.evaluate(() => document.querySelector('[data-onward-panel]').shadowRoot.querySelector('[role="dialog"]').getAttribute('aria-modal')), 'true');
+  // With an error showing, so its text is checked too.
+  await pg.getByRole('textbox', { name: 'Site rules (JSON)' }).fill('[');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  assert.match(await pg.getByRole('alert').textContent(), /not valid JSON/);
+  await pg.addScriptTag({ path: require.resolve('axe-core/axe.min.js') });
+  const violations = await pg.evaluate(async () => {
+    const res = await window.axe.run({ include: { fromShadowDom: ['[data-onward-panel]', '.p'] } }, { resultTypes: ['violations'] });
+    return res.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => v.id + ': ' + v.nodes.map((n) => JSON.stringify(n.target)).join(', '));
+  });
+  assert.deepEqual(violations, []);
+  // axe can't find the backgrounds inside the panel's shadow root, so it files
+  // every colour contrast check there as incomplete. Measure it here instead:
+  // each piece of text against the nearest opaque background, to WCAG AA.
+  const lowContrast = await pg.evaluate(() => {
+    const rgb = (c) => (c.match(/[\d.]+/g) || []).map(Number);
+    const lum = (c) => c.slice(0, 3).map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; })
+      .reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const background = (el) => {
+      for (let n = el; n && n.nodeType === 1; n = n.parentElement || n.getRootNode().host) {
+        const c = rgb(getComputedStyle(n).backgroundColor);
+        if (c.length === 3 || c[3] === 1) return c;
+      }
+      return [255, 255, 255];
+    };
+    const low = [];
+    for (const el of document.querySelector('[data-onward-panel]').shadowRoot.querySelectorAll('.p, .p *')) {
+      if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim())) continue;
+      const cs = getComputedStyle(el);
+      const [a, b] = [lum(rgb(cs.color)), lum(background(el))];
+      const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const size = parseFloat(cs.fontSize);
+      if (ratio < (size >= 24 || (size >= 18.66 && Number(cs.fontWeight) >= 700) ? 3 : 4.5)) low.push(`${el.tagName.toLowerCase()}.${el.className} ${ratio.toFixed(2)}`);
+    }
+    return low;
+  });
+  assert.deepEqual(lowContrast, []);
+  await pg.getByRole('button', { name: 'Cancel' }).click();
+  assert.equal(await pg.evaluate(() => document.activeElement.getAttribute('href')), '/post/1', 'focus came back');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

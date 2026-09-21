@@ -1131,6 +1131,25 @@
     return el;
   }
 
+  let statusBox = null;
+  /** Tells screen readers what happened (a page loaded or failed, the end) without showing anything. */
+  function announce(msg) {
+    if (typeof document === 'undefined' || !document.body) return;
+    if (!statusBox || !statusBox.host.isConnected) {
+      statusBox = shadowHost('div', 'position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;display:block;');
+      // Not part of the page's Onward UI (bars, toasts); nothing to see or click.
+      statusBox.host.removeAttribute('data-onward');
+      statusBox.host.setAttribute('data-onward-status', '');
+      statusBox.region = h('div', { role: 'status', 'aria-live': 'polite' });
+      statusBox.sr.appendChild(statusBox.region);
+      document.documentElement.appendChild(statusBox.host);
+    }
+    // Emptied first, so the same words twice are read twice.
+    const region = statusBox.region;
+    region.textContent = '';
+    setTimeout(() => { region.textContent = msg; }, 50);
+  }
+
   let toastBox = null;
   function toast(msg, kind) {
     if (typeof document === 'undefined' || !document.body) return;
@@ -1230,7 +1249,10 @@
         this.userStopped = false;
         if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
       }
-      if (reason) this.addBar(null, reason, kind || 'end');
+      if (reason) {
+        this.addBar(null, reason, kind || 'end');
+        announce(reason);
+      }
       this.refreshBars();
       setTimeout(this.onScroll, 0);
     }
@@ -1242,6 +1264,7 @@
       if (this.loadCtl) this.loadCtl.abort();
       this.stop(null, 'end', 'user');
       this.stopBar = this.addBar(null, 'Stopped by you.', 'end', () => this.resume(), 'Resume');
+      announce('Stopped by you.');
     }
 
     resume() {
@@ -1317,6 +1340,7 @@
       // Cancels a load in flight and takes Onward's pages back out, so the
       // site's own pages are the only copy.
       this.destroy();
+      if (hadPages) announce(STANDING_BY + ', so Onward took its pages back out.');
       if (this.opts.onStandDown) this.opts.onStandDown(hadPages);
     }
 
@@ -1404,6 +1428,7 @@
       } else {
         this.endReason = 'lost';
         this.addBar(null, 'This site keeps redrawing its list, so pages can’t be added here.', 'err');
+        announce('This site keeps redrawing its list, so pages can’t be added here.');
       }
     }
 
@@ -1564,7 +1589,9 @@
         console.warn(TAG, e);
         if (this.failures >= 3) this.stop('Could not load the next page: ' + e.message, 'err');
         else {
-          this.retryBar = this.addBar(this.next && this.next.url, 'Page ' + (this.page + 1) + ' failed (' + e.message + '). Paused.', 'err', () => {
+          const failed = 'Page ' + (this.page + 1) + ' failed (' + e.message + '). Paused.';
+          announce(failed);
+          this.retryBar = this.addBar(this.next && this.next.url, failed, 'err', () => {
             this.paused = false;
             // Retry means carry on, after a Stop too.
             if (this.userStopped) this.resume();
@@ -1678,6 +1705,7 @@
         this.seen.add(stripHash(finalUrl));
         bar.first = this.lastInserted;
         bar.size = this.wrap ? 1 : prepared.length;
+        announce(`Page ${this.page} loaded, ${prepared.length} ${prepared.length === 1 ? 'item' : 'items'}.`);
         if (below) this.waitForReader();
         this.onPageAppended(url);
         setTimeout(() => { if (!this.destroyed && this.lost()) this.handleLost(); }, 1500);
@@ -1726,6 +1754,7 @@
       if (!grew) return this.stop('The “load more” button stopped adding items.');
       if (below) this.waitForReader();
       this.page++;
+      announce('More items loaded.');
       this.onPageAppended(null);
     }
 
@@ -1859,7 +1888,7 @@
       label{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid #313244}
       input[type=number]{width:80px} input,select,textarea{background:#181825;color:#cdd6f4;border:1px solid #45475a;border-radius:6px;padding:5px 7px;font:inherit}
       textarea{width:100%;min-height:90px;font-family:ui-monospace,Consolas,monospace;font-size:12px;margin-top:6px}
-      .blk{padding:9px 0;border-bottom:1px solid #313244} .hint{color:#7f849c;font-size:12px;margin-top:3px}
+      .blk{padding:9px 0;border-bottom:1px solid #313244} .hint{color:#9399b2;font-size:12px;margin-top:3px}
       .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
       button{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:8px;padding:7px 14px;cursor:pointer;font:inherit;transition:transform .12s,background .12s}
       button:hover{background:#45475a;transform:translateY(-1px)} button.pri{background:#89b4fa;color:#11111b;border-color:#89b4fa}
@@ -1870,11 +1899,16 @@
     const runOnSel = h('select', { 'data-k': 'runOn' }, ...[['all', 'every site'], ['listed', 'only sites I list']].map(([v, t]) => { const o = h('option', { value: v }, t); o.selected = s.runOn === v; return o; }));
     const allow = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Sites to run on' }); allow.value = s.allowHosts.join('\n');
     const skip = h('input', { type: 'text', spellcheck: 'false', value: s.skipPaths, 'data-k': 'skipPaths', 'aria-label': 'Stay off pages whose path matches', style: 'width:100%;margin-top:6px;font-family:ui-monospace,Consolas,monospace;font-size:12px' });
-    const rules = h('textarea', { spellcheck: 'false' }); rules.value = JSON.stringify(s.rules, null, 2);
-    const excl = h('textarea', { spellcheck: 'false' }); excl.value = s.exclude.join('\n');
-    const srcs = h('textarea', { spellcheck: 'false', style: 'min-height:50px' }); srcs.value = s.sources.join('\n');
-    const err = h('div', { class: 'err' });
-    const close = () => host.remove();
+    const rules = h('textarea', { spellcheck: 'false', 'aria-label': 'Site rules (JSON)' }); rules.value = JSON.stringify(s.rules, null, 2);
+    const excl = h('textarea', { spellcheck: 'false', 'aria-label': 'Never run on these hosts' }); excl.value = s.exclude.join('\n');
+    const srcs = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Rule list URLs' }); srcs.value = s.sources.join('\n');
+    const err = h('div', { class: 'err', role: 'alert' });
+    // Focus goes into the dialog and, when it closes, back where it was.
+    const opener = document.activeElement;
+    const close = () => {
+      host.remove();
+      if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
+    };
     const save = () => {
       let parsed;
       try { parsed = JSON.parse(rules.value || '[]'); } catch (e) { err.textContent = 'Site rules are not valid JSON: ' + e.message; return; }
@@ -1896,7 +1930,7 @@
       close();
       toast('Settings saved. Reload the page to apply them.', 'ok');
     };
-    const panel = h('div', { class: 'p', role: 'dialog', 'aria-label': 'Onward settings' },
+    const panel = h('div', { class: 'p', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Onward settings' },
       h('h2', {}, 'Onward ' + VERSION),
       h('div', { class: 'sub' }, location.hostname + ': ' + (app.pager && !app.pager.stopped ? `active, page ${app.pager.page}` : app.status)),
       h('label', {}, 'Start loading when this many screens remain', num('threshold', '0.1')),
@@ -1920,6 +1954,8 @@
     const bg = h('div', { class: 'bg', onclick: (e) => { if (e.target === bg) close(); } }, panel);
     sr.appendChild(bg);
     document.documentElement.appendChild(host);
+    const first = panel.querySelector('input, select, textarea, button');
+    if (first) first.focus();
   }
 
   // ---------------------------------------------------------------------------
