@@ -2341,8 +2341,9 @@
 
   async function updateSources(urls, loud) {
     // One tab at a time. The lock names its tab, is renewed before each list so
-    // a slow refresh keeps it, expires in case its tab closes, and only ever
-    // gets cleared by the tab that holds it.
+    // a slow refresh keeps it (but never taken back from a tab that took over
+    // after a long stall), expires in case its tab closes, and only ever gets
+    // cleared by the tab that holds it.
     const id = Math.random().toString(36).slice(2);
     const lock = () => {
       const l = store.get('sourcesLock');
@@ -2363,7 +2364,7 @@
       const cache = Object.assign({}, store.get('sourceCache'));
       const failures = [];
       for (const u of urls) {
-        take();
+        if (lock().id === id) take();
         let res;
         try { res = acceptRuleList(cache[u], await fetchText(u), Date.now()); } catch (e) { res = { entry: cache[u], error: e.message }; }
         if (res.error) {

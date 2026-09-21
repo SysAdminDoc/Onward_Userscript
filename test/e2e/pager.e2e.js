@@ -1758,6 +1758,32 @@ test('with "only sites I list", the toggle really turns on a site turned off ear
   await ctx.close();
 });
 
+test('a tab that lost the refresh lock to another never takes it back, with several lists', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const pg = await ctx.newPage();
+  await pg.goto(base + '/blog?page=1');
+  const lists = [base + '/rules.json?mode=good&k=1', base + '/rules.json?mode=good&k=2'];
+  await pg.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: l, sourcesUpdated: 0, sourcesTried: 0 })), lists);
+  await inject(pg, SHARED_SHIM);
+  await pg.waitForTimeout(400); // mid-way through the first list (1.5 s)
+  await pg.evaluate(() => {
+    const g = JSON.parse(localStorage.getItem('__gm'));
+    g.sourcesLock = { at: Date.now(), id: 'other' };
+    localStorage.setItem('__gm', JSON.stringify(g));
+  });
+  let retaken = null;
+  for (let i = 0; i < 30 && !retaken; i++) {
+    await pg.waitForTimeout(150);
+    const l = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')).sourcesLock);
+    if (!l || l.id !== 'other') retaken = JSON.stringify(l);
+  }
+  const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
+  assert.equal(retaken, null, 'this tab took the lock back: ' + retaken);
+  assert.equal(stored.sourcesLock && stored.sourcesLock.id, 'other');
+  assert.equal(stored.sourceCache[lists[1]].count, 2, 'and it still stored both lists');
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
