@@ -69,6 +69,21 @@ function route(url) {
         } });</script>`) };
   }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
+  if (u.pathname === '/selfscroll') {
+    // Loads more by itself near the bottom, and still advertises rel=next for crawlers.
+    const more = JSON.stringify(Array.from({ length: LAST - n }, (_, i) => posts(n + i + 1)));
+    return { body: page('Self ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/selfscroll?page=', n, 'Next')}
+      <script>const more = ${more}; let busy = false;
+        addEventListener('scroll', () => {
+          if (busy || !more.length || innerHeight + scrollY < document.documentElement.scrollHeight - 200) return;
+          busy = true;
+          setTimeout(() => { document.getElementById('list').insertAdjacentHTML('beforeend', more.shift()); busy = false; }, 100);
+        });</script>`, `<link rel="next" href="/selfscroll?page=${n + 1}">`) };
+  }
+  if (u.pathname === '/generator') {
+    return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
+      '<meta name="generator" content="Discourse 2026.9.0-latest">') };
+  }
   if (u.pathname === '/more') {
     return { body: page('Load more', `<ul class="posts" id="list">${posts(1)}</ul><button class="load-more" id="lm">Load more</button>
       <script>let n = 1; document.getElementById('lm').onclick = () => { n++; setTimeout(() => {

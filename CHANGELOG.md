@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Onward stands by on sites that already load more as you scroll. Discourse and Flarum are recognised straight away. Anywhere else, the first page waits a few seconds, and if the site adds items by itself in that time Onward stays out of it. A new menu command, "Run Onward here anyway", overrides this for the current page.
 - The hidden iframe used for script-rendered pages is now sandboxed. A page that tries to break out of frames can no longer navigate your tab away, and audio or video inside it is muted and paused.
 
 ## [0.1.0] (2026-09-21)

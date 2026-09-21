@@ -11,7 +11,8 @@ const SHIM = `
   window.__gm = {};
   window.GM_getValue = (k, d) => (k in window.__gm ? window.__gm[k] : d);
   window.GM_setValue = (k, v) => { window.__gm[k] = v; };
-  window.GM_registerMenuCommand = () => {};
+  window.__menu = {};
+  window.GM_registerMenuCommand = (name, fn) => { window.__menu[name] = fn; };
 `;
 
 let server, browser, base;
@@ -150,7 +151,8 @@ test('a list the site redraws switches to wrapped pages', async () => {
 
 test('a failing page pauses instead of retrying on every scroll', async () => {
   const { pg, ctx } = await open('/flaky?page=1');
-  for (let i = 0; i < 12; i++) {
+  // Long enough to cover the first-load probe (3 s) plus several retry-tempting scrolls.
+  for (let i = 0; i < 24; i++) {
     await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await pg.waitForTimeout(250);
   }
@@ -179,7 +181,7 @@ test('element picker saves a working site rule', async () => {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
   await pg.goto(base + '/blog?page=1');
-  await pg.addScriptTag({ content: SHIM.replace('window.GM_registerMenuCommand = () => {};', 'window.__menu = {}; window.GM_registerMenuCommand = (n, f) => { window.__menu[n] = f; };') + SCRIPT });
+  await pg.addScriptTag({ content: SHIM + SCRIPT });
   // Don't return the picker's promise: evaluate would wait for clicks that can't happen yet.
   await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
   const clickOn = async (sel) => {
@@ -198,6 +200,41 @@ test('element picker saves a working site rule', async () => {
   assert.equal(rules[0].click, false);
   assert.ok(await scrollToEnd(pg, endBar), 'pager restarted with the rule');
   assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  await ctx.close();
+});
+
+test('a site that loads more by itself gets no Onward pages', async () => {
+  const { pg, ctx, errors } = await open('/selfscroll?page=1');
+  const logs = [];
+  pg.on('console', (m) => logs.push(m.text()));
+  for (let i = 0; i < 16; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  const r = await pg.evaluate(() => ({
+    bars: document.querySelectorAll('[data-onward]').length,
+    posts: Array.from(document.querySelectorAll('#list > li.post > a')).map((a) => a.textContent),
+  }));
+  assert.equal(r.bars, 0, 'no Onward bars');
+  assert.equal(r.posts.length, site.PER * site.LAST, 'the site loaded its own pages');
+  assert.equal(new Set(r.posts).size, r.posts.length, 'no duplicate items');
+  assert.ok(logs.some((l) => /loads more by itself/.test(l)), 'Onward said why it stood down');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a Discourse generator meta keeps Onward off until forced', async () => {
+  const { pg, ctx, errors } = await open('/generator?page=1');
+  // Scroll past the 3 s first-load probe, or an unguarded pager would still be waiting.
+  for (let i = 0; i < 16; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('[data-onward]').length), 0, 'inactive by default');
+  await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+  assert.ok(await scrollToEnd(pg, endBar), 'forced run reaches the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.deepEqual(errors, []);
   await ctx.close();
 });
 

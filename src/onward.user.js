@@ -789,6 +789,12 @@
   // The pager
   // ---------------------------------------------------------------------------
 
+  // Before its first load Onward waits this long near the end of the list, and
+  // stands down if the site adds this many items by itself meanwhile.
+  const PROBE_MS = 3000;
+  const NATIVE_GROWTH = 3;
+  const STANDING_BY = 'This site loads more by itself';
+
   class Pager {
     constructor(settings, rule, opts) {
       this.s = settings;
@@ -804,6 +810,7 @@
       this.hashes = new Set();
       this.separators = [];
       this.inserted = [];  // nodes we added, so destroy() can take them back out
+      this.ours = new WeakSet();
       this.startUrl = location.href;
       this.mode = (rule && rule.mode) || settings.mode;
       this.onScroll = this.onScroll.bind(this);
@@ -830,6 +837,7 @@
       else if (this.wrap && !this.buttonMode) content.container.after(this.anchor);
       else last.after(this.anchor);
       this.scroller = findScroller(content.container);
+      if (!this.opts.force) this.watchNative();
       console.info(TAG, 'active:', next.how, next.url || '(button)', '| content:', content.how, this.wrap ? '(wrapped)' : '', content.container);
       return true;
     }
@@ -867,6 +875,32 @@
       return { remaining: height - (win.scrollY + win.innerHeight), view: win.innerHeight, height, top: 0 };
     }
 
+    /** Element children of the list that Onward didn't add. */
+    nativeCount() {
+      let n = 0;
+      for (const c of this.container.children) if (!this.ours.has(c) && !c.hasAttribute('data-onward')) n++;
+      return n;
+    }
+
+    // Some sites load more by themselves (Discourse, feeds). Once Onward starts
+    // waiting to load, growth it didn't cause means it should stand down.
+    watchNative() {
+      this.nativeObserver = new MutationObserver(() => {
+        if (this.baseCount === undefined || this.stopped) return;
+        if (this.nativeCount() - this.baseCount >= NATIVE_GROWTH) this.standDown();
+      });
+      this.nativeObserver.observe(this.container, { childList: true });
+    }
+
+    standDown() {
+      if (this.stoodDown) return;
+      this.stoodDown = true;
+      console.info(TAG, STANDING_BY.toLowerCase() + '; standing by');
+      if (this.page > 1) return this.stop(STANDING_BY + ', so Onward stopped.');
+      this.stopped = true;
+      if (this.opts.onStandDown) this.opts.onStandDown();
+    }
+
     /** Frameworks sometimes redraw the list and throw away what we added. */
     lost() {
       return !this.anchor.isConnected || (this.lastInserted && !this.lastInserted.isConnected);
@@ -890,6 +924,7 @@
       if (this.scroller) this.scroller.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('resize', this.onScroll);
+      if (this.nativeObserver) this.nativeObserver.disconnect();
       for (const s of this.separators) s.outer.remove();
       this.separators = [];
       if (this.anchor) this.anchor.remove();
@@ -911,7 +946,20 @@
         // Tall footers shouldn't delay loading: the end of the list counts too.
         const end = this.wrap ? (this.lastInserted || this.container) : this.anchor.parentNode;
         const toListEnd = end && end.getBoundingClientRect ? end.getBoundingClientRect().bottom - (m.top + m.view) : m.remaining;
-        if (Math.min(m.remaining, toListEnd) < m.view * this.s.threshold) this.loadNext();
+        if (Math.min(m.remaining, toListEnd) >= m.view * this.s.threshold) return;
+        // The first time near the end, give the site PROBE_MS to show whether
+        // it loads more by itself before Onward adds anything.
+        if (!this.opts.force && !this.probed) {
+          if (!this.probeStart) {
+            this.probeStart = Date.now();
+            this.baseCount = this.nativeCount();
+            setTimeout(this.onScroll, PROBE_MS + 50);
+            return;
+          }
+          if (Date.now() - this.probeStart < PROBE_MS) return;
+          this.probed = true;
+        }
+        this.loadNext();
       });
     }
 
@@ -999,9 +1047,11 @@
           this.anchor.parentNode.insertBefore(shell, this.anchor);
           this.lastInserted = shell;
           this.inserted.push(shell);
+          this.ours.add(shell);
         } else {
           this.lastInserted = frag.firstChild;
           this.inserted.push(...frag.childNodes);
+          for (const n of frag.childNodes) this.ours.add(n);
           this.anchor.parentNode.insertBefore(frag, this.anchor);
         }
         this.onPageAppended(url);
@@ -1038,6 +1088,8 @@
       }
       const before = this.container.childElementCount;
       const height = document.documentElement.scrollHeight;
+      // From here on the list grows because of our clicks, not by itself.
+      if (this.nativeObserver) { this.nativeObserver.disconnect(); this.nativeObserver = null; }
       el.click();
       const grew = await waitFor(() => this.container.childElementCount > before || document.documentElement.scrollHeight > height + 50, 10000);
       this.removeBar(bar);
@@ -1329,12 +1381,24 @@
         this.tryStart(0, opts);
       },
       tryStart(attempt, opts) {
+        opts = opts || {};
         const s = loadSettings();
         const host = location.hostname;
         if (s.disabledHosts.includes(host)) { this.status = 'disabled on this site'; return; }
         if (s.exclude.some((x) => host === x || host.endsWith('.' + x))) { this.status = 'excluded host'; return; }
+        const generator = document.querySelector('meta[name="generator" i]');
+        if (!opts.force && generator && /\b(discourse|flarum)\b/i.test(generator.content)) {
+          this.status = STANDING_BY;
+          console.info(TAG, 'generator meta says the site loads more by itself; standing by');
+          return;
+        }
         const rule = matchRule(s.rules, location.href) || matchRule(s.sourceRules, location.href);
-        const pager = new Pager(s, rule, { wrap: !!(opts && opts.wrap), onLost: () => this.restart({ wrap: true }) });
+        const pager = new Pager(s, rule, {
+          wrap: !!opts.wrap,
+          force: !!opts.force,
+          onLost: () => this.restart({ wrap: true, force: opts.force }),
+          onStandDown: () => { this.status = STANDING_BY; },
+        });
         if (pager.detect()) {
           this.pager = pager;
           this.status = 'active';
@@ -1357,6 +1421,10 @@
       GM_registerMenuCommand('Load next page now', () => {
         if (app.pager && !app.pager.stopped) app.pager.loadNext();
         else toast(app.status === 'active' ? 'No more pages.' : 'Nothing to load: ' + app.status, 'err');
+      });
+      GM_registerMenuCommand('Run Onward here anyway', () => {
+        toast('Running on this page.', 'ok');
+        app.restart({ force: true });
       });
       GM_registerMenuCommand('Pick next link and content…', () => runPicker(app));
       GM_registerMenuCommand('Settings', () => openSettings(app));
