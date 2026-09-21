@@ -20,6 +20,8 @@ It does the same job as [Pagetual](https://github.com/hoothin/UserScripts/tree/m
 
 The script updates itself from this repo. Firefox needs no extra step.
 
+Userscripts for Safari should work too: Onward keeps its settings through the async `GM.*` storage that manager offers, and since it has no menu, a small "Onward" button in the corner (and an "Onward…" button on each page bar) opens Settings, where the menu's commands are. That hasn't been tried on a real iPhone or Mac yet.
+
 ## What it does
 
 - **Finds the next page without rules.** It checks `<link rel="next">` first, then scores links and buttons by their label ("Next", "Older posts", 下一页, 次へ, 다음, Следующая and about 80 more), their classes, whether they sit in a pager, and whether the URL is the current `?page=N` or `/page/N/` plus one. Previous-page links, disabled items, carousels and sliders are ruled out. Numbered pagers work too: if page 3 is marked current, the link labelled 4 wins.

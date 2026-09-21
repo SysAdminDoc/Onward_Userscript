@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Onward runs on managers that only offer the async `GM.*` functions and no menu, such as Userscripts for Safari. It reads its settings once when a page opens (the big rule lists only if you use some), saves through `GM.setValue`, and without a menu shows a small "Onward" button in the corner and an "Onward…" button on its page bars, which open Settings with the menu's commands in it. Not yet tried on a real Apple device.
 - The site's own pager under the list now follows the pages Onward adds. After page 3 it shows page 3 as the current one and its links lead on from there, where it used to still point at page 2. Turning Onward off puts the original back.
 - Pages can load only when you ask. A new setting, "Load pages: when I click", everywhere or for one site, stops loading as you scroll and puts a "Load page N" button at the end of the list, so the footer stays in reach. Every page bar also has "Skip to footer", which jumps past the list and holds loading off for 30 seconds.
 - Scripts written for AutoPagerize work with Onward. It sends the same events (`GM_AutoPagerizeLoaded`, `GM_AutoPagerizeNextPageLoaded`, and `AutoPagerize_DOMNodeInserted` on each added element), marks what it adds with the `autopagerize_page_element` class, and answers `AutoPagerizeDisableRequest`, `AutoPagerizeEnableRequest` and `AutoPagerizeToggleRequest`. The README lists every event, `onward:page` included.

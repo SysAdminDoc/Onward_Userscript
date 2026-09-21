@@ -61,6 +61,21 @@ const BRIDGE = `(() => {
   } });
 })()`;
 
+// A manager with only the async GM.* API and no menu (Userscripts for Safari): values answer a moment later.
+const ASYNC_SHIM = `(() => {
+  const root = document.documentElement;
+  const seeded = root.getAttribute('data-onward-test-gm');
+  const data = seeded ? JSON.parse(seeded) : (window.__gm || {});
+  window.__gm = data;
+  const later = (v) => new Promise((r) => setTimeout(() => r(v), 5));
+  const reads = {};
+  window.GM = {
+    getValue: (k, d) => { reads[k] = (reads[k] || 0) + 1; root.setAttribute('data-onward-test-reads', JSON.stringify(reads)); return later(k in data ? data[k] : d); },
+    setValue: (k, v) => { data[k] = v; root.setAttribute('data-onward-test-gm', JSON.stringify(data)); return later(); },
+  };
+})();
+`;
+
 /**
  * Runs the script (after a GM shim) on the page, in the chosen world.
  * Playwright's console and pageerror events report both worlds.
@@ -2246,6 +2261,55 @@ for (const how of ['Resume', 'the menu']) {
     await ctx.close();
   });
 }
+
+test('with only the async GM API, stored rules and settings apply', async () => {
+  const { pg, ctx, errors, logs } = await open('/blog?page=1', (r) => { window.__gm = { rules: [r], maxPages: 3 }; }, RULE('.pagination a.next', 'ul.posts > li.post', '/blog'), ASYNC_SHIM);
+  assert.ok(await scrollToEnd(pg, () => /Stopped after 3 pages/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' '))), 'paged to the cap');
+  assert.ok(logs.some((l) => /active: rule/.test(l)), 'the stored rule ran');
+  assert.match(await pg.evaluate(onwardText), /Stopped after 3 pages/, 'the stored page cap held');
+  // No rule lists configured: the big stored lists are never read.
+  const reads = await pg.evaluate(() => JSON.parse(document.documentElement.getAttribute('data-onward-test-reads') || '{}'));
+  assert.ok(reads.maxPages >= 1 && !reads.sourceCache && !reads.sourceRules, JSON.stringify(reads));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('with no menu, a corner button opens Settings on a page Onward can\'t page, where the picker is', async () => {
+  // The last page: nothing to load, so no page bar.
+  const { pg, ctx, errors } = await open('/blog?page=4', null, null, ASYNC_SHIM);
+  await pg.waitForTimeout(500);
+  await pg.getByRole('button', { name: 'Onward', exact: true }).click();
+  assert.equal(await pg.getByRole('button', { name: 'Pick next link and content…', exact: true }).count(), 1);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('with a menu there is no corner button', async () => {
+  const { pg, ctx } = await open('/blog?page=1');
+  await pg.waitForTimeout(300);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('[data-onward-corner]').length), 0);
+  await ctx.close();
+});
+
+test('with no menu, page bars open Settings, which offers the commands', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', null, null, ASYNC_SHIM);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
+  await pg.getByRole('button', { name: 'Onward…' }).first().click();
+  for (const name of ['Toggle Onward on this site', 'Load next page now', 'Load 5 more pages', 'Run Onward here anyway', 'Pick next link and content…']) {
+    assert.equal(await pg.getByRole('button', { name, exact: true }).count(), 1, name);
+  }
+  const before = await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length);
+  await pg.getByRole('button', { name: 'Load next page now', exact: true }).click();
+  await pg.waitForFunction((n) => document.querySelectorAll('ul.posts > li.post').length > n, before);
+  // Settings saves through GM.setValue.
+  await pg.getByRole('button', { name: 'Onward…' }).first().click();
+  await pg.getByRole('spinbutton', { name: /^Maximum pages per visit/ }).fill('7');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  await pg.waitForTimeout(100);
+  assert.equal(await pg.evaluate(() => window.__gm.maxPages), 7);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
 
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');

@@ -14,6 +14,10 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
+// @grant        GM.getValue
+// @grant        GM.setValue
+// @grant        GM.xmlHttpRequest
+// @grant        GM.registerMenuCommand
 // @connect      *
 // @run-at       document-idle
 // @noframes
@@ -71,18 +75,42 @@
   // An older form is refreshed on the next page load instead of a week later.
   const LIST_FORMAT = 2;
 
+  // The async GM.* API, where a manager offers only that (Userscripts for Safari).
+  const gm4 = () => (typeof GM === 'object' && GM && typeof GM.getValue === 'function' ? GM : null);
+  let asyncValues = null; // every value, read once at boot when only the async API exists
+
   const store = {
     get(key) {
       try {
         if (typeof GM_getValue === 'function') return GM_getValue(key, DEFAULTS[key]);
+        if (asyncValues && key in asyncValues) return asyncValues[key];
       } catch (e) { /* fall through to defaults */ }
       return DEFAULTS[key];
     },
     set(key, value) {
-      try { if (typeof GM_setValue === 'function') GM_setValue(key, value); }
-      catch (e) { console.warn(TAG, 'could not save', key, e); }
+      try {
+        if (typeof GM_setValue === 'function') GM_setValue(key, value);
+        else if (gm4()) {
+          if (asyncValues) asyncValues[key] = value;
+          Promise.resolve(GM.setValue(key, value)).catch((e) => console.warn(TAG, 'could not save', key, e));
+        }
+      } catch (e) { console.warn(TAG, 'could not save', key, e); }
     },
   };
+
+  /**
+   * With only the async API, read the values once, before anything needs one.
+   * The rule lists are big, so they're only read where some are configured.
+   */
+  async function loadAsyncValues() {
+    if (typeof GM_getValue === 'function' || !gm4()) return;
+    const read = (k) => Promise.resolve(GM.getValue(k, DEFAULTS[k])).catch(() => DEFAULTS[k]);
+    const light = Object.keys(DEFAULTS).filter((k) => !HEAVY_KEYS.has(k));
+    const values = await Promise.all(light.map(read));
+    asyncValues = {};
+    light.forEach((k, i) => { asyncValues[k] = values[i]; });
+    if ((asyncValues.sources || []).length) for (const k of HEAVY_KEYS) asyncValues[k] = await read(k);
+  }
 
   /** host is one of the listed hosts, or a subdomain of one. */
   function hostListed(list, host) {
@@ -1054,7 +1082,9 @@
 
   function fetchBytes(url, signal) {
     const sameOrigin = safeOrigin(url) === win.location.origin;
-    if (sameOrigin || typeof GM_xmlhttpRequest !== 'function') {
+    const gmXhr = typeof GM_xmlhttpRequest === 'function' ? GM_xmlhttpRequest
+      : (gm4() && typeof GM.xmlHttpRequest === 'function' ? GM.xmlHttpRequest.bind(GM) : null);
+    if (sameOrigin || !gmXhr) {
       // One controller per request: the pager's signal or the timeout aborts it.
       const ctl = new AbortController();
       let timedOut = false;
@@ -1080,7 +1110,7 @@
     }
     return new Promise((resolve, reject) => {
       if (signal && signal.aborted) return reject(new Error('aborted'));
-      const req = GM_xmlhttpRequest({
+      const req = gmXhr({
         // Only rule lists come this way (pages are same-origin fetches), and they need no cookies.
         method: 'GET', url, responseType: 'arraybuffer', timeout: FETCH_TIMEOUT_MS, anonymous: true,
         onload: (r) => {
@@ -2057,6 +2087,7 @@
         kind === '' ? h('button', { title: 'Scroll to top', onclick: () => (this.scroller || win).scrollTo({ top: 0, behavior: 'smooth' }) }, '↑ Top') : null,
         kind === '' && this.userStopped ? h('button', { title: 'Carry on loading pages', onclick: () => this.resume() }, 'Resume') : null,
         kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.userStop() }, 'Stop') : null,
+        kind === '' && this.opts.onMenu ? h('button', { title: 'Settings and commands', onclick: this.opts.onMenu }, 'Onward…') : null,
         kind === '' || kind === 'manual' ? h('button', { title: 'Jump past the list; loading waits a while', onclick: () => this.skipToFooter() }, 'Skip to footer') : null,
       ].filter(Boolean));
       // A hidden page bar leaves the layout (a zero-height wrapper still takes
@@ -2231,6 +2262,9 @@
       h('div', { class: 'blk' }, 'Site rules (JSON)', rules,
         h('div', { class: 'hint' }, '[{"url": "^https://example\\\\.com/list", "next": "a.next", "content": "#results > .item"}]. CSS or XPath. Optional: "insert", "mode", "click".')),
       h('div', { class: 'blk' }, 'Never run on these hosts', excl),
+      app.commands ? h('div', { class: 'blk' }, 'Commands',
+        h('div', { class: 'row', style: 'justify-content:flex-start' },
+          ...app.commands.filter(([name]) => name !== 'Settings').map(([name, run]) => h('button', { onclick: () => { close(); run(); } }, name)))) : null,
       h('div', { class: 'blk' }, 'Diagnostics', diag,
         h('div', { class: 'hint' }, 'What Onward found on this page, for a bug report. It includes this page’s address and the next one, which can hold private details (a search, a session), so read it over before you paste it anywhere. Nothing is sent.'),
         h('div', { class: 'row', style: 'justify-content:flex-start' }, h('button', {
@@ -2807,10 +2841,11 @@
     return !!(document.getElementById('flarum-loading') || document.getElementById('flarum-json-payload'));
   }
 
-  function boot() {
+  async function boot() {
     if (win.top !== win.self || win.__onward) return;
     if (!document.body || !/html/i.test(document.contentType || 'text/html')) return;
     win.__onward = true;
+    await loadAsyncValues();
 
     const app = {
       pager: null,
@@ -2872,6 +2907,7 @@
             if (hadPages) toast(STANDING_BY + ', so Onward took its pages back out.');
           },
           onUrl: (u) => { this.expectUrl = u; },
+          onMenu: this.commands ? () => openSettings(this) : null,
         });
         if (pager.detect()) {
           // Right after a route change the old route's list can still be on
@@ -2893,8 +2929,29 @@
       },
     };
 
-    if (typeof GM_registerMenuCommand === 'function') {
-      GM_registerMenuCommand('Toggle Onward on this site', () => {
+    // The pager, ready for a load you asked for; or null, having said why not.
+    const pagerForLoad = () => {
+      const p = app.pager;
+      if (!p) { toast('Nothing to load: ' + app.status, 'err'); return null; }
+      if (p.userStopped) {
+        toast('Resuming. Paging was stopped by you.', 'ok');
+        p.resume(false);
+      } else if (p.paused) {
+        toast('Trying again. Paging was paused after an error.', 'ok');
+      } else if (p.stopped) {
+        const why = {
+          limit: 'Stopped at the page limit. You can raise it in Settings.',
+          error: 'Stopped after repeated errors.',
+          nogrowth: 'Stopped because added pages weren’t making the page any longer.',
+          lost: 'Stopped because this site keeps redrawing its list.',
+        };
+        toast(why[p.endReason] || 'Last page reached.', 'err');
+        return null;
+      }
+      return p;
+    };
+    const commands = [
+      ['Toggle Onward on this site', () => {
         const host = location.hostname;
         const t = toggleLists(loadSettings(), host);
         store.set('allowHosts', t.allowHosts);
@@ -2908,36 +2965,30 @@
           app.status = t.disabledHosts.includes(host) ? 'disabled on this site' : 'not on your list of sites';
           toast('Disabled on ' + host);
         }
-      });
-      // The pager, ready for a load you asked for; or null, having said why not.
-      const pagerForLoad = () => {
-        const p = app.pager;
-        if (!p) { toast('Nothing to load: ' + app.status, 'err'); return null; }
-        if (p.userStopped) {
-          toast('Resuming. Paging was stopped by you.', 'ok');
-          p.resume(false);
-        } else if (p.paused) {
-          toast('Trying again. Paging was paused after an error.', 'ok');
-        } else if (p.stopped) {
-          const why = {
-            limit: 'Stopped at the page limit. You can raise it in Settings.',
-            error: 'Stopped after repeated errors.',
-            nogrowth: 'Stopped because added pages weren’t making the page any longer.',
-            lost: 'Stopped because this site keeps redrawing its list.',
-          };
-          toast(why[p.endReason] || 'Last page reached.', 'err');
-          return null;
-        }
-        return p;
-      };
-      GM_registerMenuCommand('Load next page now', () => { const p = pagerForLoad(); if (p) p.loadNext(); });
-      GM_registerMenuCommand('Load 5 more pages', () => { const p = pagerForLoad(); if (p) p.loadMany(5); });
-      GM_registerMenuCommand('Run Onward here anyway', () => {
+      }],
+      ['Load next page now', () => { const p = pagerForLoad(); if (p) p.loadNext(); }],
+      ['Load 5 more pages', () => { const p = pagerForLoad(); if (p) p.loadMany(5); }],
+      ['Run Onward here anyway', () => {
         toast('Running on this page.', 'ok');
         app.restart({ force: true });
-      });
-      GM_registerMenuCommand('Pick next link and content…', () => runPicker(app));
-      GM_registerMenuCommand('Settings', () => openSettings(app));
+      }],
+      ['Pick next link and content…', () => runPicker(app)],
+      ['Settings', () => openSettings(app)],
+    ];
+    const registerMenu = typeof GM_registerMenuCommand === 'function' ? GM_registerMenuCommand
+      : (typeof GM === 'object' && GM && typeof GM.registerMenuCommand === 'function' ? GM.registerMenuCommand.bind(GM) : null);
+    if (registerMenu) for (const [name, fn] of commands) registerMenu(name, fn);
+    // No menu at all (Userscripts for Safari): page bars carry an "Onward…" button,
+    // Settings lists the commands, and a small corner button opens it where there's
+    // no bar yet (before page 2, or where Onward found nothing to page).
+    else {
+      app.commands = commands;
+      const { host, sr } = shadowHost('div', 'position:fixed;left:8px;bottom:8px;z-index:2147483646;display:block;');
+      host.setAttribute('data-onward-corner', '');
+      sr.appendChild(h('style', {}, `.o{font:12px system-ui,sans-serif;color:#cdd6f4;background:rgba(30,30,46,.92);border:1px solid #7f849c;border-radius:8px;
+        padding:4px 9px;cursor:pointer;opacity:.45;transition:opacity .12s}.o:hover,.o:focus{opacity:1}`));
+      sr.appendChild(h('button', { class: 'o', title: 'Onward settings and commands', onclick: () => openSettings(app) }, 'Onward'));
+      document.documentElement.appendChild(host);
     }
 
     // Refresh rule lists weekly, in the background.
