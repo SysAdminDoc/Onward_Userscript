@@ -188,6 +188,9 @@
     return parts.map(normalize).filter(Boolean);
   }
 
+  /** What a button says, numbers aside ("Load 20 more" and "Load 15 more" are one button). */
+  const labelKey = (el) => labelOf(el).join(' ').replace(/\d+/g, '#');
+
   function attrText(el) {
     return [el.id, el.getAttribute('class'), el.getAttribute('rel'), el.getAttribute('aria-label'),
       el.getAttribute('title'), el.getAttribute('data-testid')].filter(Boolean).join(' ');
@@ -1309,6 +1312,8 @@
       if (!content || !content.items.length) return false;
       this.next = next;
       this.nextPath = next.el.tagName === 'LINK' ? null : describePath(next.el);
+      // What a load-more button said when it was found; clickMore only clicks one that still says it.
+      this.nextLabel = labelKey(next.el);
       this.container = content.container;
       this.path = describePath(content.container);
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
@@ -1891,16 +1896,20 @@
         this.removeBar(bar);
         return this.handleLost();
       }
-      // The button: the same element, or one the site drew in its place with the
-      // same label. Whatever else sits there now (a Delete button after a route
-      // change, say) is never clicked.
-      const label = labelOf(this.next.el).join(' ');
+      // The button as it was found: the same element or one the site drew in its
+      // place, saying what it said then (numbers aside). The same node reused for
+      // something else (a Delete button after a route change) is never clicked.
       const ready = () => {
         const el = this.next.el.isConnected ? this.next.el : resolvePath(document, this.nextPath);
-        if (!el || !el.isConnected || !isVisible(el, true) || el.disabled) return null;
-        return el === this.next.el || labelOf(el).join(' ') === label ? el : null;
+        if (!el || !el.isConnected || !isVisible(el, true) || el.disabled || el.getAttribute('aria-disabled') === 'true') return null;
+        return labelKey(el) === this.nextLabel ? el : null;
       };
-      const el = ready();
+      // A button still busy ("Loading…", disabled, hidden) just after its items render comes back; give it 3 s.
+      let el = ready();
+      if (!el) {
+        await waitFor(() => !!(el = ready()), 3000);
+        if (this.destroyed) return;
+      }
       if (!el) {
         this.removeBar(bar);
         return this.stop('No more items.');

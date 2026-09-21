@@ -168,6 +168,50 @@ function route(url, req) {
     return { body: page('TT ' + n, `<main><ul class="posts">${items}</ul>${pager('/ttlist?page=', n, 'Next »')}</main>`,
       `<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'">`) };
   }
+  if (u.pathname === '/moreswap') {
+    // Load more says "Loading…" while it works, then the site draws a fresh button in its place.
+    return { body: page('Load more swap', `<ul class="posts" id="list">${posts(1)}</ul><div id="pgr"><button class="load-more" id="lm">Load more</button></div>
+      <script>let n = 1;
+      function wire(b) { b.onclick = () => { b.textContent = 'Loading…'; n++; setTimeout(() => {
+        for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'Loaded ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); }
+        const pgr = document.getElementById('pgr'); pgr.textContent = '';
+        if (n >= ${LAST}) return;
+        const nb = document.createElement('button'); nb.className = 'load-more'; nb.id = 'lm'; nb.textContent = 'Load more'; pgr.append(nb); wire(nb); }, 150); }; }
+      wire(document.getElementById('lm'));</script>`) };
+  }
+  if (u.pathname === '/morebusy') {
+    // A load-more button that reads "Loading…" and stays disabled for 2 s after its items render.
+    return { body: page('Load more (busy)', `<ul class="posts" id="list">${posts(1)}</ul><button class="load-more" id="lm">Load more</button>
+      <script>let n = 1; const b = document.getElementById('lm'); b.onclick = () => { n++; b.disabled = true; b.textContent = 'Loading…'; setTimeout(() => {
+        for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'Loaded ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); }
+        if (n >= ${LAST}) b.remove(); else setTimeout(() => { b.disabled = false; b.textContent = 'Load more'; }, 2000); }, 150); };</script>`) };
+  }
+  if (u.pathname === '/morecount') {
+    // A load-more button whose label counts what's left.
+    return { body: page('Load more (count)', `<ul class="posts" id="list">${posts(1)}</ul><button class="load-more" id="lm">Show more (${PER * (LAST - 1)} left)</button>
+      <script>let n = 1; const b = document.getElementById('lm'); b.onclick = () => { n++; setTimeout(() => {
+        for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'Loaded ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); }
+        const left = ${PER} * (${LAST} - n); if (!left) b.remove(); else b.textContent = 'Show more (' + left + ' left)'; }, 150); };</script>`) };
+  }
+  if (u.pathname === '/hashreuse') {
+    // A hash-routed app that reconciles like Vue's v-if/v-else: the detail view reuses the list's <ul> and <button>.
+    return { body: page('Hash reuse', `<div id="view"><ul class="posts" id="list"></ul><button class="load-more" id="lm">Load more</button></div>
+      <script>window.__deleted = 0; window.__clicks = [];
+      const list = document.getElementById('list'); const btn = document.getElementById('lm');
+      function render() {
+        if (location.hash === '#/item') {
+          list.innerHTML = '<li class="post">Item 7: details of item 7 with summary text</li>';
+          btn.textContent = 'Delete this item';
+          btn.onclick = () => { window.__deleted++; };
+          return;
+        }
+        list.innerHTML = '';
+        for (let i = 1; i <= 20; i++) { const li = document.createElement('li'); li.className = 'post'; li.innerHTML = '<a href="#/item">Item ' + i + '</a> with summary text'; list.append(li); }
+        btn.textContent = 'Load more';
+        btn.onclick = () => { window.__clicks.push(Date.now()); const li = document.createElement('li'); li.className = 'post'; li.textContent = 'More item with summary text'; list.append(li); };
+      }
+      addEventListener('hashchange', render); render();</script>`) };
+  }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {
     // Loads more by itself near the bottom, and still advertises rel=next for crawlers.

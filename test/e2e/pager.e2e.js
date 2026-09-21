@@ -2083,6 +2083,48 @@ test('a page that enforces Trusted Types, with <noscript> pictures in its posts,
   await ctx.close();
 });
 
+test('a Load more button the site draws again after "Loading…" is clicked to the end', async () => {
+  const { pg, ctx, errors } = await open('/moreswap');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 20, 40), 'every batch');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a load-more button that is busy for a moment after its items is waited for', async () => {
+  const { pg, ctx, errors } = await open('/morebusy');
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), site.PER * site.LAST, 'every batch, not just the first');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a load-more button whose label counts down is still the same button', async () => {
+  const rule = Object.assign(RULE('#lm', '#list > li.post', '/morecount'), { click: true });
+  const { pg, ctx, errors } = await open('/morecount', (r) => { window.__gm = { rules: [r] }; }, rule);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 20, 40), 'every batch');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('after a route change reuses the Load more node for Delete, Onward clicks nothing', async () => {
+  const { pg, ctx, errors } = await open('/hashreuse#/list');
+  // The reader at the end of the list: after the first-time wait Onward clicks once, and the next click waits its 1 s turn.
+  let t1 = 0;
+  for (let i = 0; i < 40 && !t1; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.getElementById('list').getBoundingClientRect().bottom + scrollY - innerHeight + 50));
+    await pg.waitForTimeout(200);
+    t1 = await pg.evaluate(() => window.__clicks[0] || 0);
+  }
+  assert.ok(t1, 'Onward clicked Load more');
+  // The reader opens an item just before that turn comes, so the click would land on the reused node.
+  await pg.evaluate((at) => new Promise((r) => setTimeout(r, Math.max(0, at - Date.now()))), t1 + 900);
+  await pg.evaluate(() => { location.hash = '#/item'; });
+  await pg.waitForTimeout(2500);
+  assert.equal(await pg.evaluate(() => window.__deleted), 0, 'Onward clicked "Delete this item"');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
