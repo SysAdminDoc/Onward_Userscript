@@ -290,7 +290,7 @@ test('chooseRule: site rules first, render retries, then list rules', () => {
   // Items first and the pager drawn later is common, so the retries come first;
   // after them the rule still supplies the items and detection finds the next link.
   assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 0), { rule: null, wait: true }, 'the rule\'s items but no next link yet: wait');
-  assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 2), { rule: { ...fits, next: '', click: false }, mine: true }, 'then its items, with detection for the next link');
+  assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 2), { rule: { ...fits, next: '', click: false, strictNext: true }, mine: true }, 'then its items, with strict detection for the next link');
   const excluded = { ...fits, excludeUrl: '/list/' };
   assert.deepEqual(O.chooseRule([excluded], [list], href, page, 0), { rule: list }, 'an excluded site rule does not count');
 });
@@ -311,7 +311,8 @@ test('a rule\'s next link is taken unless it really is Previous', () => {
   assert.equal(pick('<a class="n" href="/1"><img alt="arrow-back"></a><a class="n" href="/3">Next</a>'), 'Next', 'with nothing saying next, that icon is Previous');
   assert.equal(pick('<a class="pagination__prev-next page-link" href="/2">Next post: A</a>'), 'Next post: A', 'a class with both words');
   // Previous in all its forms is still skipped; the real next link after it is taken.
-  for (const prev of ['« Previous', 'Prev', 'Página anterior', 'Page précédente', 'Newer posts »', 'First', 'Last »', 'Zurück', '上一页', '‹']) {
+  for (const prev of ['« Previous', 'Prev', 'Página anterior', 'Page précédente', 'Newer posts »', 'First', 'Last »', 'Zurück', '上一页', '‹',
+    'Previous page of results', '« Previous post: How we built it']) {
     assert.equal(pick(`<a class="n" href="/1">${prev}</a><a class="n" href="/3">Next</a>`), 'Next', prev);
   }
   assert.equal(pick('<a class="page-link" aria-label="Go to the previous page" href="/1">1</a><a class="n" href="/3">3</a>'), '3', 'an aria-label that says previous');
@@ -333,6 +334,27 @@ test('the default pages to stay off, and the host list', () => {
   assert.equal(O.pathSkipped('([bad', '/checkout'), false, 'a broken pattern skips nothing');
   assert.ok(O.hostListed(['example.com'], 'www.example.com'));
   assert.ok(!O.hostListed(['example.com'], 'badexample.com'));
+});
+
+test('a site rule that supplied only the items takes a next page by address, not a next thread', () => {
+  const rule = { url: '^https://example\\.com/', next: 'a.pg-next', content: 'ul.posts > li' };
+  // The last page of a thread: the rule's items, no rule next link, and a link to the next thread.
+  const thread = dom(`<ul class="posts">${items(3)}</ul><a class="next-thread" href="/t/124">Next thread ›</a>`, 'https://example.com/t/123');
+  const choice = O.chooseRule([rule], [], 'https://example.com/t/123', thread, 2);
+  assert.equal(choice.rule.strictNext, true);
+  assert.equal(O.findNext(thread, 'https://example.com/t/123', { rule: choice.rule }), null, 'no next thread');
+  // Another section with different pager markup: page 2 by address is fine.
+  const tag = dom(`<ul class="posts">${items(3)}</ul><div class="nav"><a href="/tag/x?page=2">Older entries</a></div>`, 'https://example.com/tag/x');
+  assert.equal(O.findNext(tag, 'https://example.com/tag/x', { rule: O.chooseRule([rule], [], 'https://example.com/tag/x', tag, 2).rule }).url, 'https://example.com/tag/x?page=2');
+});
+
+test('nextByAddress: the page after this one, going by the address', () => {
+  const yes = [['https://e.com/l?page=3', 'https://e.com/l?page=4'], ['https://e.com/l', 'https://e.com/l?page=2'], ['https://e.com/tag/x/', 'https://e.com/tag/x/page/2/'],
+    ['https://e.com/l?sort=new', 'https://e.com/l?sort=new&p=2'], ['https://e.com/blog/page/7/', 'https://e.com/blog/page/8/']];
+  const no = [['https://e.com/t/123', 'https://e.com/t/124'], ['https://e.com/l', 'https://e.com/l?page=3'], ['https://e.com/l', 'https://e.com/other?page=2'],
+    ['https://e.com/l', 'https://f.com/l?page=2'], ['https://e.com/l?sort=new', 'https://e.com/l?page=2']];
+  for (const [a, b] of yes) assert.ok(O.nextByAddress(b, a), a + ' -> ' + b);
+  for (const [a, b] of no) assert.ok(!O.nextByAddress(b, a), a + ' -/-> ' + b);
 });
 
 test('rules from a downloaded list never click; rules you write can', () => {

@@ -122,6 +122,8 @@
   // not "Prevention" or "Backyard"). WordPress puts "Newer posts" in .nav-next,
   // and it leads back toward page 1.
   const PREV_WORD_RE = /(^|[^a-z])(prev|previous|back|newer|first|last|précédente?|precedente|zurück|vorherige[nrs]?|anterior|предыдущ|назад|попередн)(?![a-z])|上一|上页|上頁|前へ|前の|前页|首页|首頁|尾页|尾頁|末页|末頁|最後|最初|이전|처음|마지막/i;
+  // A label that starts with one of these is Previous however long it is: "Previous page of results".
+  const PREV_STRONG_RE = /^(?:(?:prev|previous|précédente?|precedente|vorherige[nrs]?|anterior)(?![a-z])|предыдущ|попередн|上一|上页|上頁|前へ|前の|前页|이전)/i;
   // A label that starts like this is a next link whatever follows: "Next (last page)".
   const NEXT_START_RE = /^(?:(?:next|older|continue|more|load more|show more)(?![a-z])|suivant|weiter|nächste|siguiente|próxima|successiv|volgende|nästa|следующ|далее|下一|下页|下頁|次|다음)/i;
   const BACK_ARROWS = /^[<«‹←⟨❮◀⇐⇦≪]+$/;
@@ -266,6 +268,9 @@
       if (!best || c.score > best.score || (c.score === best.score && c.url && !best.url)) best = c;
     };
     const bumped = new Set(incrementUrls(pageUrl).map(stripHash));
+    // A site rule that supplied only the items: its own next link wasn't on the
+    // page, so only a next page by address or rel counts ("Next thread" won't).
+    const strict = !!(opts.rule && opts.rule.strictNext);
     for (const el of cands) {
       const labels = labelOf(el);
       const attrs = attrText(el);
@@ -288,6 +293,7 @@
       }
       const href = el.getAttribute('href');
       const u = acceptUrl(href);
+      if (strict && !relNext && !(u && nextByAddress(u, pageUrl))) continue;
       if (u && bumped.has(stripHash(u))) score += 45; // ?page=N+1 or /page/N+1
       if (score === 0) continue;
       if (inPagination(el)) score += 20;
@@ -327,7 +333,7 @@
     const prevAttr = PREV_ATTR_RE.test(attrs);
     const nextAttr = NEXT_ATTR_RE.test(attrs);
     if (nextAttr && !prevAttr) return false;
-    if (labels.some((t) => t.split(' ').length <= 3 && PREV_WORD_RE.test(t))) return true;
+    if (labels.some((t) => PREV_STRONG_RE.test(t) || (t.split(' ').length <= 3 && PREV_WORD_RE.test(t)))) return true;
     if (prevAttr && !nextAttr) return true;
     const dir = el.closest('[dir]');
     return !(dir && /^rtl$/i.test(dir.getAttribute('dir'))) && raw.some((t) => BACK_ARROWS.test(t));
@@ -350,6 +356,24 @@
   }
 
   /** The URLs page N+1 would most likely have, given this page's URL. */
+  const PAGE_PARAM_RE = /^(p|page|pg|pn|paged|pagenum|pageno|page_no|pagenumber|seite)$/i;
+
+  /** u is the page after pageUrl going by the address alone: N+1 of a numbered one, or page 2 of an unnumbered one. */
+  function nextByAddress(u, pageUrl) {
+    if (incrementUrls(pageUrl).some((x) => stripHash(x) === stripHash(u))) return true;
+    let a;
+    let b;
+    try { a = new URL(pageUrl); b = new URL(u); } catch (e) { return false; }
+    if (a.origin !== b.origin) return false;
+    if (a.pathname === b.pathname) {
+      const added = [...b.searchParams.keys()].filter((k) => !a.searchParams.has(k));
+      const kept = [...a.searchParams.keys()].every((k) => b.searchParams.get(k) === a.searchParams.get(k));
+      return kept && added.length === 1 && PAGE_PARAM_RE.test(added[0]) && b.searchParams.get(added[0]) === '2';
+    }
+    const base = a.pathname.replace(/\/$/, '');
+    return b.search === a.search && /^\/(page|p|seite|pagina|strona)[/-]?2\/?$/i.test(b.pathname.slice(base.length)) && b.pathname.startsWith(base + '/');
+  }
+
   function incrementUrls(pageUrl) {
     const out = [];
     let m = /^(.*[?&](?:p|page|pg|pn|paged|pagenum|pageno|page_no|pagenumber|seite)=)(\d{1,4})((?:[&#].*)?)$/i.exec(pageUrl);
@@ -893,7 +917,7 @@
     if (rule) return { rule, mine: true };
     if (mine.length && attempt < 2) return { rule: null, wait: true };
     const byContent = mine.find((r) => r.content && queryAll(doc, r.content).length > 0);
-    if (byContent) return { rule: Object.assign({}, byContent, { next: '', click: false }), mine: true };
+    if (byContent) return { rule: Object.assign({}, byContent, { next: '', click: false, strictNext: true }), mine: true };
     // Lists cached before list rules lost their clicks are held to the same rule here.
     const lists = matchingRules(listRules, href).map((r) => (r.click ? Object.assign({}, r, { click: false }) : r));
     return { rule: fittingRule(lists, doc, href) };
@@ -2254,7 +2278,7 @@
   }
 
   return {
-    VERSION, boot, hostListed, pathSkipped, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
+    VERSION, boot, hostListed, pathSkipped, nextByAddress, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
     itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });
