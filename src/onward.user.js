@@ -1190,22 +1190,43 @@
   }
 
   let statusBox = null;
-  /** Tells screen readers what happened (a page loaded or failed, the end) without showing anything. */
-  function announce(msg) {
-    if (typeof document === 'undefined' || !document.body) return;
+  /** Two visually hidden live regions for screen readers, made once Onward starts so they're there before anything is said. */
+  function statusRegions() {
+    if (typeof document === 'undefined' || !document.body) return null;
     if (!statusBox || !statusBox.host.isConnected) {
       statusBox = shadowHost('div', 'position:fixed;top:0;left:0;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;display:block;');
       // Not part of the page's Onward UI (bars, toasts); nothing to see or click.
       statusBox.host.removeAttribute('data-onward');
       statusBox.host.setAttribute('data-onward-status', '');
-      statusBox.region = h('div', { role: 'status', 'aria-live': 'polite' });
-      statusBox.sr.appendChild(statusBox.region);
+      statusBox.regions = [h('div', { role: 'status', 'aria-live': 'polite' }), h('div', { role: 'status', 'aria-live': 'polite' })];
+      statusBox.turn = 0;
+      statusBox.queue = [];
+      statusBox.sr.append(...statusBox.regions);
       document.documentElement.appendChild(statusBox.host);
     }
-    // Emptied first, so the same words twice are read twice.
-    const region = statusBox.region;
-    region.textContent = '';
-    setTimeout(() => { region.textContent = msg; }, 50);
+    return statusBox;
+  }
+
+  /**
+   * Tells screen readers what happened (a page loaded or failed, the end, a
+   * toast) without showing anything. What's said at the same moment is read
+   * as one ("Page 4 loaded, 5 items. No more pages."), and each turn writes
+   * the other region, so the same words twice are still news.
+   */
+  function announce(msg) {
+    const box = statusRegions();
+    if (!box) return;
+    if (!box.queue.includes(msg)) box.queue.push(msg);
+    if (box.timer) return;
+    box.timer = setTimeout(() => {
+      box.timer = 0;
+      const text = box.queue.join(' ');
+      box.queue = [];
+      const [now, before] = box.turn ? [box.regions[1], box.regions[0]] : [box.regions[0], box.regions[1]];
+      box.turn = 1 - box.turn;
+      before.textContent = '';
+      now.textContent = text;
+    }, 100);
   }
 
   let toastBox = null;
@@ -1222,6 +1243,7 @@
     const t = h('div', { class: 't ' + (kind || '') }, 'Onward: ' + msg);
     toastBox.sr.appendChild(t);
     setTimeout(() => t.remove(), kind === 'err' ? 6000 : 3200);
+    announce(msg);
   }
 
   // ---------------------------------------------------------------------------
@@ -1296,6 +1318,7 @@
       win.addEventListener('scroll', this.onScroll, { passive: true });
       win.addEventListener('resize', this.onScroll, { passive: true });
       for (const t of INPUT_EVENTS) win.addEventListener(t, this.onInput, { passive: true, capture: true });
+      statusRegions();
       this.onScroll();
     }
 

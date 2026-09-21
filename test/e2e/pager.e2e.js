@@ -1535,16 +1535,43 @@ test('"Load 5 more pages" pressed while a page is loading waits for it, then car
   await ctx.close();
 });
 
-const statusText = () => document.querySelector('[data-onward-status]')?.shadowRoot.querySelector('[role="status"]').textContent || '';
+// What the live regions say now (Onward writes the two in turn and empties the other).
+const statusText = () => Array.from(document.querySelector('[data-onward-status]')?.shadowRoot.querySelectorAll('[role="status"]') || []).map((r) => r.textContent).join('');
 
 test('screen readers hear pages load, and the end', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1');
   assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
-  await pg.waitForFunction(() => /^Page [23] loaded, 5 items\.$/.test(document.querySelector('[data-onward-status]')?.shadowRoot.querySelector('[role="status"]').textContent || ''));
+  await pg.waitForFunction('/^Page [23] loaded, 5 items\\.$/.test((' + statusText + ')())');
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
-  await pg.waitForTimeout(200);
-  assert.equal(await pg.evaluate(statusText), 'No more pages.');
+  await pg.waitForTimeout(250);
+  // The last page's load and the end are said at the same moment, so they're read as one.
+  assert.equal(await pg.evaluate(statusText), 'Page 4 loaded, 5 items. No more pages.');
   assert.equal(await pg.evaluate(() => document.querySelector('[data-onward-status]').hasAttribute('data-onward')), false, 'not counted as a page bar');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('announcements take turns between the two regions, and toasts are announced too', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  // Which region each message lands in.
+  await pg.waitForFunction(() => document.querySelector('[data-onward-status]'));
+  await pg.evaluate(() => {
+    window.__said = [];
+    document.querySelector('[data-onward-status]').shadowRoot.querySelectorAll('[role="status"]').forEach((r, i) => {
+      new MutationObserver(() => { if (r.textContent) window.__said.push([i, r.textContent]); }).observe(r, { childList: true, characterData: true, subtree: true });
+    });
+  });
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
+  await pg.waitForTimeout(250);
+  // The same toast twice: each goes to the other region, so it's news both times.
+  for (let i = 0; i < 2; i++) {
+    await pg.evaluate(() => { window.__menu['Settings'](); });
+    await pg.getByRole('button', { name: 'Save' }).click();
+    await pg.waitForTimeout(250);
+  }
+  const said = await pg.evaluate(() => window.__said);
+  const saved = 'Settings saved. Reload the page to apply them.';
+  assert.deepEqual(said, [[0, 'Page 2 loaded, 5 items.'], [1, saved], [0, saved]], JSON.stringify(said));
   assert.deepEqual(errors, []);
   await ctx.close();
 });
