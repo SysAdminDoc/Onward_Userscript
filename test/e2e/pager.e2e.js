@@ -853,6 +853,38 @@ test('a wallpaper grid with the same button under every picture pages to the end
   await ctx.close();
 });
 
+test('a javascript: frame in page 2 does not run, however its scheme is spelled', async () => {
+  const { pg, ctx, errors } = await open('/jsiframe?page=1');
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  assert.equal(await pg.evaluate(() => window.__pwned), undefined);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a "Load more" link Onward won\'t follow is not clicked instead', async () => {
+  const { pg, ctx, errors } = await open('/xmore?page=1');
+  for (let i = 0; i < 16; i++) {
+    await pg.keyboard.press('End');
+    await pg.waitForTimeout(300);
+  }
+  assert.match(pg.url(), /^http:\/\/127\.0\.0\.1:\d+\/xmore\?page=1$/, 'the tab stayed');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), site.PER);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a clicking site rule doesn\'t click a link Onward won\'t follow', async () => {
+  const { pg, ctx, errors } = await open('/xmore?page=1', (r) => { window.__gm = { rules: [r] }; },
+    Object.assign(RULE('a.more', 'ul.posts > li.post', '/xmore'), { click: true }));
+  for (let i = 0; i < 16; i++) {
+    await pg.keyboard.press('End');
+    await pg.waitForTimeout(300);
+  }
+  assert.match(pg.url(), /^http:\/\/127\.0\.0\.1:\d+\/xmore\?page=1$/, 'the tab stayed');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a refresh hidden in page 2 does not navigate the tab', async () => {
   const { pg, ctx, errors } = await open('/metaref?page=1', () => { window.__alive = true; });
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');

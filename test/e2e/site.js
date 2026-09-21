@@ -353,6 +353,16 @@ function route(url, req) {
     const tiles = Array.from({ length: PER }, (_, i) => `<li class="w"><img src="/img/${(n - 1) * PER + i + 1}.png" width="200" height="100" alt=""><button type="button">Download</button></li>`).join('');
     return { body: page('Walls ' + n, `<ul class="walls" id="walls">${tiles}</ul>${pager('/walls?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/jsiframe') {
+    // Page 2's first post carries a javascript: frame whose scheme is split by a newline.
+    const list = n > 1 ? posts(n).replace('<li class="post">', '<li class="post"><iframe src="java&#10;script:parent.__pwned=location.href"></iframe>') : posts(n);
+    return { body: page('JsIframe ' + n, `<ul class="posts">${list}</ul>${pager('/jsiframe?page=', n, 'Next')}`) };
+  }
+  if (u.pathname === '/xmore') {
+    // A "Load more" link to another origin (https on this http site), the only way on.
+    const more = n === 1 ? `<a class="more" href="https://127.0.0.1:1/xmore?page=2">Load more</a>` : '';
+    return { body: page('Xmore ' + n, `<ul class="posts" id="list">${posts(n)}</ul><div class="pagination">${more}</div>`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

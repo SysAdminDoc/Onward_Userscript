@@ -135,6 +135,8 @@
   const WIDGET_RE = /slick|swiper|carousel|slider|slideshow|banner|gallery|lightbox|owl-|glide|splide|flickity|tabs?-|modal|datepicker|calendar/i;
   const MORE_MULTI_RE = /\s|[぀-ヿ一-鿿가-힯]/; // multi-word or CJK "load more" phrases
   const JUNK_HREF_RE = /^\s*(javascript:|#|$)/i;
+  // Onward fetches next pages with the reader's cookies, so a next link must never sign them out or delete something.
+  const DANGER_URL_RE = /(^|[^a-z])(log[-_]?out|log[-_]?off|sign[-_]?out|sign[-_]?off|unsubscribe)([^a-z]|$)|[/=](delete|destroy|remove)([/?&#]|$)/i;
 
   const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const stripDecor = (s) => s.replace(/^[\s<>›»→⟩❯▶▸«‹←⟨❮◀|\-–—:.()[\]]+|[\s<>›»→⟩❯▶▸«‹←⟨❮◀|\-–—:.()[\]]+$/g, '').trim();
@@ -210,6 +212,19 @@
     try { const x = new URL(u); x.hash = ''; return x.href; } catch (e) { return u; }
   }
 
+  /** Clicking it would load another page: a link with a real address. */
+  const navigates = (el) => {
+    const href = el.getAttribute('href');
+    return !!href && !JUNK_HREF_RE.test(href);
+  };
+
+  function dangerousUrl(u) {
+    try {
+      const x = new URL(u);
+      return DANGER_URL_RE.test(x.pathname + x.search);
+    } catch (e) { return true; }
+  }
+
   function absUrl(v, base) {
     try { return new URL(v, base).href; } catch (e) { return null; }
   }
@@ -239,6 +254,7 @@
       if (/^https:/.test(pageUrl) && /^http:/.test(u)) u = u.replace(/^http:/, 'https:');
       if (stripHash(u) === here || seen.has(stripHash(u))) return null;
       if (safeOrigin(u) !== origin) return null;
+      if (dangerousUrl(u)) return null;
       return u;
     };
 
@@ -249,7 +265,8 @@
         if (looksPrevious(el)) continue;
         const u = acceptUrl(el.getAttribute('href') || el.getAttribute('value'));
         if (u) return { url: u, el, score: 1000, how: 'rule' };
-        if (opts.rule.click && isVisible(el, layout)) return { url: null, el, score: 1000, how: 'rule-click' };
+        // A link Onward refused (another site, a page already shown) isn't clicked instead: that would leave the page.
+        if (opts.rule.click && isVisible(el, layout) && !navigates(el)) return { url: null, el, score: 1000, how: 'rule-click' };
       }
       return null;
     }
@@ -302,7 +319,7 @@
 
       if (u) {
         consider({ url: u, el, score, how: more ? 'more-link' : 'text' });
-      } else if (layout && isVisible(el, layout) && (more || opts.allowButtons)) {
+      } else if (layout && isVisible(el, layout) && (more || opts.allowButtons) && !navigates(el)) {
         // Load-more buttons only make sense on the live page.
         consider({ url: null, el, score: score - 5, how: 'button' });
       }
@@ -612,8 +629,11 @@
   /** A srcset that only offers placeholders (data: URIs, blank.gif and the like). */
   const placeholderSet = (set) => /^\s*data:/i.test(set) || set.split(',').every((part) => PLACEHOLDER_RE.test(part.trim().split(/\s+/)[0] || ''));
 
+  /** root itself when it matches, then everything below it that does: items are often the <a> or <img> themselves. */
+  const selfAndBelow = (root, sel) => (root.matches && root.matches(sel) ? [root] : []).concat(Array.from(root.querySelectorAll(sel)));
+
   function fixLazyImages(root, base) {
-    for (const img of root.querySelectorAll('img, source')) {
+    for (const img of selfAndBelow(root, 'img, source')) {
       const src = img.getAttribute('src') || '';
       for (const a of LAZY_ATTRS) {
         const v = img.getAttribute(a);
@@ -624,7 +644,7 @@
       if (lazySet && (!set || placeholderSet(set))) img.setAttribute('srcset', lazySet);
     }
     // Lazy background images: <div data-bg="/cover.jpg">.
-    for (const el of root.querySelectorAll(BG_ATTRS.map((a) => '[' + a + ']').join(','))) {
+    for (const el of selfAndBelow(root, BG_ATTRS.map((a) => '[' + a + ']').join(','))) {
       if (el.style.backgroundImage && !/^url\(["']?data:/.test(el.style.backgroundImage)) continue;
       const v = BG_ATTRS.map((a) => el.getAttribute(a)).find(Boolean).trim();
       const inner = /^url\(/i.test(v) ? v.replace(/^url\(\s*["']?|["']?\s*\)$/gi, '') : v;
@@ -635,14 +655,14 @@
 
   function absolutize(root, base) {
     for (const [sel, attr] of [['[href]', 'href'], ['[src]', 'src'], ['[action]', 'action'], ['[poster]', 'poster']]) {
-      for (const el of root.querySelectorAll(sel)) {
+      for (const el of selfAndBelow(root, sel)) {
         const v = el.getAttribute(attr);
         if (!v || /^(#|javascript:|data:|mailto:|tel:)/i.test(v)) continue;
         const u = absUrl(v, base);
         if (u) el.setAttribute(attr, u);
       }
     }
-    for (const el of root.querySelectorAll('[srcset]')) {
+    for (const el of selfAndBelow(root, '[srcset]')) {
       const fixed = el.getAttribute('srcset').split(',').map((part) => {
         const [u, ...rest] = part.trim().split(/\s+/);
         const a = u ? absUrl(u, base) : null;
@@ -657,23 +677,28 @@
   // scripts, and <noscript> is live markup in a DOMParser document (which
   // parses with scripting off), so its images load twice and handlers fire.
   const INERT_SEL = 'script, meta, base, noscript, iframe[srcdoc]';
-  const URL_ATTRS = ['src', 'href', 'action', 'formaction', 'xlink:href'];
-  const JS_URL_RE = /^\s*javascript:/i;
+  const URL_ATTRS = ['src', 'href', 'action', 'formaction', 'xlink:href', 'data'];
+  // The URL parser drops tabs and newlines anywhere, and control characters and
+  // spaces in front, so "java&#9;script:" is javascript: too.
+  const jsUrl = (v) => /^javascript:/i.test(v.replace(/[\t\n\r]/g, '').replace(/^[\u0000-\u0020]+/, ''));
 
-  /** A placeholder image whose real URL is only in a sibling <noscript><img> takes it from there. */
+  /** A placeholder image with no lazy address of its own takes the real one from a <noscript> copy. */
+  function fillFromNoscript(img, real) {
+    const src = img.getAttribute('src') || '';
+    const lazy = LAZY_ATTRS.some((a) => { const v = img.getAttribute(a); return v && !/^data:/.test(v); });
+    if ((src && !PLACEHOLDER_RE.test(src)) || lazy) return false;
+    img.setAttribute('src', real.getAttribute('src'));
+    if (real.getAttribute('srcset')) img.setAttribute('srcset', real.getAttribute('srcset'));
+    return true;
+  }
+
+  /** Placeholder images whose real URL is only in a sibling <noscript><img> take it from there. */
   function takeNoscriptImages(root) {
     for (const ns of root.querySelectorAll('noscript')) {
       const real = ns.querySelector('img[src]');
       if (!real || !ns.parentElement) continue;
       for (const img of ns.parentElement.children) {
-        if (img.tagName !== 'IMG') continue;
-        const src = img.getAttribute('src') || '';
-        const lazy = LAZY_ATTRS.some((a) => { const v = img.getAttribute(a); return v && !/^data:/.test(v); });
-        if ((!src || PLACEHOLDER_RE.test(src)) && !lazy) {
-          img.setAttribute('src', real.getAttribute('src'));
-          if (real.getAttribute('srcset')) img.setAttribute('srcset', real.getAttribute('srcset'));
-          break;
-        }
+        if (img.tagName === 'IMG' && fillFromNoscript(img, real)) break;
       }
     }
   }
@@ -681,7 +706,7 @@
   function stripInert(root) {
     for (const el of root.querySelectorAll(INERT_SEL)) el.remove();
     for (const el of [root, ...root.querySelectorAll('*')]) {
-      for (const a of URL_ATTRS) if (JS_URL_RE.test(el.getAttribute(a) || '')) el.removeAttribute(a);
+      for (const a of URL_ATTRS) if (jsUrl(el.getAttribute(a) || '')) el.removeAttribute(a);
     }
   }
 
@@ -689,11 +714,15 @@
     const out = [];
     for (const it of items) {
       if (it.matches(INERT_SEL)) continue;
+      // An item that is the <img> itself: its <noscript> copy sits right after it.
+      const ns = it.tagName === 'IMG' ? it.nextElementSibling : null;
+      const real = ns && ns.tagName === 'NOSCRIPT' ? ns.querySelector('img[src]') : null;
+      if (real) fillFromNoscript(it, real);
       takeNoscriptImages(it);
-      stripInert(it);
       fixLazyImages(it, base);
-      if (it.matches('img, source')) fixLazyImages(it.parentElement || it, base);
       absolutize(it, base);
+      // Last, so nothing the repairs above wrote can act on the page either.
+      stripInert(it);
       out.push(it);
     }
     return out;
@@ -1663,7 +1692,7 @@
         const el = resolvePath(doc, this.nextPath);
         const href = el && el.getAttribute('href');
         const u = href && absUrl(href, url);
-        if (u && safeOrigin(u) === safeOrigin(url) && !seen.has(stripHash(u)) && stripHash(u) !== stripHash(url)
+        if (u && safeOrigin(u) === safeOrigin(url) && !seen.has(stripHash(u)) && stripHash(u) !== stripHash(url) && !dangerousUrl(u)
             && labelOf(el).join(' ') === labelOf(this.next.el).join(' ')) {
           return { url: u, el, how: 'path' };
         }

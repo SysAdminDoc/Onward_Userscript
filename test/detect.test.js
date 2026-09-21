@@ -208,6 +208,53 @@ test('lazy images: data-bg and data-background-image become a background image',
   assert.match(it.querySelector('.set').style.backgroundImage, /real\.jpg/, 'a background already set is kept');
 });
 
+test('prepareItems removes javascript: URLs however they are spelled, after its repairs', () => {
+  const d = dom(`<div class="i"><a href="java&#9;script:alert(1)">a</a><img src="java&#10;script:alert(2)"><form action="jav&#13;ascript:x()"><button formaction="&#1;javascript:y()">b</button></form>
+    <iframe src="java&#10;script:parent.x=1"></iframe><object data="javascript:1"></object><img class="lazy" src="/blank.gif" data-src="javascript:alert(3)"></div>`);
+  const [it] = O.prepareItems([d.querySelector('.i')], 'https://example.com/');
+  assert.equal(it.querySelector('a').hasAttribute('href'), false);
+  assert.equal(it.querySelector('img').hasAttribute('src'), false);
+  assert.equal(it.querySelector('form').hasAttribute('action'), false);
+  assert.equal(it.querySelector('button').hasAttribute('formaction'), false);
+  assert.equal(it.querySelector('iframe').hasAttribute('src'), false);
+  assert.equal(it.querySelector('object').hasAttribute('data'), false);
+  assert.ok(!/javascript/i.test(it.querySelector('img.lazy').getAttribute('src') || ''), 'a lazy javascript: address is not moved into src');
+});
+
+test('prepareItems fixes an item that is itself a link, an image or a lazy background', () => {
+  const d = dom('<div class="g"><a class="i" href="p/1"><img src="/blank.gif" data-src="t/1.jpg"></a><img class="i" src="/blank.gif" data-src="pics/2.jpg" srcset="/blank.gif 1x" data-srcset="pics/2@2x.jpg 2x"><div class="i" data-bg="bg/3.jpg"></div></div>');
+  const [a, img, bg] = O.prepareItems([...d.querySelectorAll('.i')], 'https://example.com/list/page/2/');
+  assert.equal(a.getAttribute('href'), 'https://example.com/list/page/2/p/1', 'a link item resolves against its own page');
+  assert.equal(a.querySelector('img').getAttribute('src'), 'https://example.com/list/page/2/t/1.jpg');
+  assert.equal(img.getAttribute('src'), 'https://example.com/list/page/2/pics/2.jpg', 'an image item');
+  assert.equal(img.getAttribute('srcset'), 'https://example.com/list/page/2/pics/2@2x.jpg 2x');
+  assert.match(bg.style.backgroundImage, /example\.com\/list\/page\/2\/bg\/3\.jpg/, 'a background item');
+});
+
+test('prepareItems gives an <img> item the address in the <noscript> after it', () => {
+  const d = dom('<div class="grid"><img class="i" src="/blank.gif"><noscript><img src="/real1.jpg"></noscript><img class="i" src="/blank.gif"><noscript><img src="/real2.jpg"></noscript></div>');
+  const out = O.prepareItems([...d.querySelectorAll('img.i')], 'https://example.com/');
+  assert.deepEqual(out.map((i) => i.getAttribute('src')), ['https://example.com/real1.jpg', 'https://example.com/real2.jpg']);
+});
+
+test('next links never sign the reader out or delete something', () => {
+  const pick = (links, url = BASE) => {
+    const d = dom(links, url);
+    const r = O.findNext(d, url, { rule: { url: 'x', next: 'a.n' }, layout: false });
+    return r && r.url;
+  };
+  assert.equal(pick('<a class="n" href="/account/logout">Next</a>'), null, 'logout');
+  assert.equal(pick('<a class="n" href="/ucp.php?mode=logout&sid=1">Next</a>'), null, 'mode=logout');
+  assert.equal(pick('<a class="n" href="/sign-out">Next</a>'), null);
+  assert.equal(pick('<a class="n" href="/posts/12/delete">Next</a>'), null);
+  assert.equal(pick('<a class="n" href="/list?action=remove&id=3">Next</a>'), null);
+  assert.equal(pick('<a class="n" href="/newsletter/unsubscribe?u=1">Next</a>'), null);
+  assert.equal(pick('<a class="n" href="/2024/05/search-and-destroy/">Next</a>'), 'https://example.com/2024/05/search-and-destroy/', 'a title with the word is fine');
+  assert.equal(pick('<a class="n" href="/list/?page=2">Next</a>'), 'https://example.com/list/?page=2');
+  // Detection too.
+  assert.equal(next(dom('<ul>' + items(5) + '</ul><a href="/logout">Next</a>')), null);
+});
+
 test('prepareItems takes an image URL from a sibling noscript, and drops inert top-level items', () => {
   const d = dom(`<div class="card"><img src="data:image/gif;base64,R0lGOD" class="lazy"><noscript><img src="/real.jpg" srcset="/real.jpg 1x, /real@2x.jpg 2x"></noscript></div>
     <div class="card"><img src="/placeholder.gif" data-src="/lazy.jpg"><noscript><img src="/fallback.jpg"></noscript></div>
