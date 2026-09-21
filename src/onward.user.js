@@ -139,7 +139,7 @@
   const MORE_MULTI_RE = /\s|[぀-ヿ一-鿿가-힯]/; // multi-word or CJK "load more" phrases
   const JUNK_HREF_RE = /^\s*(javascript:|#|$)/i;
   // Onward fetches next pages with the reader's cookies, so a next link must never sign them out or delete something.
-  const DANGER_URL_RE = /(^|[^a-z])(log[-_]?out|log[-_]?off|sign[-_]?out|sign[-_]?off|unsubscribe)([^a-z]|$)|[/=](delete|destroy|remove)([/?&#]|$)/i;
+  const DANGER_URL_RE = /(?:^|[^a-z])(log[-_]?out|log[-_]?off|sign[-_]?out|sign[-_]?off|unsubscribe)(?=[^a-z]|$)|[/=](delete|destroy|remove)(?=[/?&#]|$)/gi;
 
   const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const stripDecor = (s) => s.replace(/^[\s<>›»→⟩❯▶▸«‹←⟨❮◀|\-–—:.()[\]]+|[\s<>›»→⟩❯▶▸«‹←⟨❮◀|\-–—:.()[\]]+$/g, '').trim();
@@ -226,11 +226,19 @@
     return !!href && !JUNK_HREF_RE.test(href);
   };
 
-  function dangerousUrl(u) {
-    try {
-      const x = new URL(u);
-      return DANGER_URL_RE.test(x.pathname + x.search);
-    } catch (e) { return true; }
+  /** The sign-out, unsubscribe and delete words in an address's path and query, or null for a broken address. */
+  function dangerWords(u) {
+    let x;
+    try { x = new URL(u); } catch (e) { return null; }
+    return Array.from((x.pathname + x.search).matchAll(DANGER_URL_RE), (m) => (m[1] || m[2]).toLowerCase().replace(/[-_]/g, ''));
+  }
+
+  /** u would sign the reader out or delete something. A word the page's own address already has (a search for "logout", a tag called delete) doesn't count. */
+  function dangerousUrl(u, pageUrl) {
+    const words = dangerWords(u);
+    if (!words) return true;
+    const here = (pageUrl && dangerWords(pageUrl)) || [];
+    return words.some((w) => !here.includes(w));
   }
 
   function absUrl(v, base) {
@@ -262,7 +270,7 @@
       if (/^https:/.test(pageUrl) && /^http:/.test(u)) u = u.replace(/^http:/, 'https:');
       if (stripHash(u) === here || seen.has(stripHash(u))) return null;
       if (safeOrigin(u) !== origin) return null;
-      if (dangerousUrl(u)) return null;
+      if (dangerousUrl(u, pageUrl)) return null;
       return u;
     };
 
@@ -1757,7 +1765,7 @@
         const el = resolvePath(doc, this.nextPath);
         const href = el && el.getAttribute('href');
         const u = href && absUrl(href, url);
-        if (u && safeOrigin(u) === safeOrigin(url) && !seen.has(stripHash(u)) && stripHash(u) !== stripHash(url) && !dangerousUrl(u)
+        if (u && safeOrigin(u) === safeOrigin(url) && !seen.has(stripHash(u)) && stripHash(u) !== stripHash(url) && !dangerousUrl(u, url)
             && labelOf(el).join(' ') === labelOf(this.next.el).join(' ')) {
           return { url: u, el, how: 'path' };
         }

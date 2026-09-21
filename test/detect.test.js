@@ -330,6 +330,32 @@ test('requiredLiteral: a code like \\x2D or \\u002F is not text every match cont
   assert.equal(O.requiredLiteral('^https?://[^/]+/forum/viewtopic\\.php'), '/forum/viewtopic.php', 'plain text, an escaped dot included, still counts');
 });
 
+test('a danger word the page\'s own address has is not signing out', () => {
+  const list = `<ul>${items(5)}</ul>`;
+  // Next pages of a search for the word, a tag and a forum about it (0.1.0 followed all of these).
+  for (const [page, href] of [
+    ['https://example.com/search?q=logout', '/search?q=logout&page=2'],
+    ['https://example.com/search?q=unsubscribe', '/search?q=unsubscribe&page=2'],
+    ['https://example.com/search?q=remove', '/search?q=remove&page=2'],
+    ['https://example.com/questions/tagged/delete', '/questions/tagged/delete?page=2'],
+    ['https://example.com/tag/sign-out', '/tag/sign-out/page/2'],
+    ['https://example.com/forum/unsubscribe-help', '/forum/unsubscribe-help?page=2'],
+  ]) {
+    const r = next(dom(`${list}<nav class="pagination"><a rel="next" href="${href}">Next</a></nav>`, page), page);
+    assert.equal(r && r.url, new URL(href, page).href, href + ' from ' + page);
+  }
+  // Still refused: sign-out and delete links the page's address doesn't already name.
+  for (const [page, href] of [
+    ['https://example.com/forum/thread/1', '/logout?next=/forum/thread/2'],
+    ['https://example.com/wiki/Page', '/wiki/index.php?action=logout'],
+    ['https://example.com/search?q=delete', '/users/sign_out'],
+    ['https://example.com/search?q=logout', '/search?q=logout&page=2&do=unsubscribe'],
+    ['https://example.com/posts/7', '/posts/7/delete'],
+  ]) {
+    assert.equal(next(dom(`${list}<nav class="pagination"><a rel="next" href="${href}">Next</a></nav>`, page), page), null, href + ' from ' + page);
+  }
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },
