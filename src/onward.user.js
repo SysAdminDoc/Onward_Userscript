@@ -1332,15 +1332,44 @@
   // Element picker: click the next link, then one result item
   // ---------------------------------------------------------------------------
 
-  function cssPath(el) {
+  function cssPath(el, pinned) {
     if (el.id && !/\d{3,}/.test(el.id)) return '#' + CSS.escape(el.id);
     const parts = [];
     for (let n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
       if (n.id && !/\d{3,}/.test(n.id)) { parts.unshift('#' + CSS.escape(n.id)); break; }
       const cls = (n.getAttribute('class') || '').split(/\s+/).filter((c) => c && !STATE_CLASS_RE.test(c)).slice(0, 2);
-      parts.unshift(n.tagName.toLowerCase() + cls.map((c) => '.' + CSS.escape(c)).join(''));
+      let step = n.tagName.toLowerCase() + cls.map((c) => '.' + CSS.escape(c)).join('');
+      if (pinned && n.parentElement) step += ':nth-child(' + (Array.prototype.indexOf.call(n.parentElement.children, n) + 1) + ')';
+      parts.unshift(step);
     }
     return parts.join(' > ');
+  }
+
+  function xpathString(s) {
+    if (!s.includes("'")) return "'" + s + "'";
+    if (!s.includes('"')) return '"' + s + '"';
+    return 'concat(' + s.split("'").map((part) => "'" + part + "'").join(', "\'", ') + ')';
+  }
+
+  /**
+   * A selector that matches this element and nothing else on the page: the
+   * class path first, then the element's label (which stays put from page to
+   * page), then :nth-child steps as a last resort.
+   */
+  function uniqueSelector(el, cssOnly) {
+    const only = (sel) => { const m = queryAll(el.ownerDocument, sel); return m.length === 1 && m[0] === el; };
+    const tag = el.tagName.toLowerCase();
+    const candidates = [cssPath(el)];
+    if (!cssOnly) {
+      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (text && text.length <= 60) candidates.push('//' + tag + '[normalize-space()=' + xpathString(text) + ']');
+      for (const a of ['aria-label', 'title', 'value']) {
+        const v = el.getAttribute(a);
+        if (v) candidates.push('//' + tag + '[@' + a + '=' + xpathString(v) + ']');
+      }
+    }
+    candidates.push(cssPath(el, true));
+    return candidates.find(only) || null;
   }
 
   function pickElement(prompt) {
@@ -1400,16 +1429,24 @@
       item = item.parentElement;
     }
     const sig = signature(item);
-    const container = cssPath(item.parentElement);
+    const container = uniqueSelector(item.parentElement, true) || cssPath(item.parentElement);
     const itemSel = sig.split('.').map((p, i) => (i === 0 ? p.toLowerCase() : '.' + CSS.escape(p))).join('');
     const rule = {
       name: location.hostname,
       // host, not hostname: a rule without the port never matches a site that has one.
       url: '^https?://' + location.host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/',
-      next: cssPath(nextEl),
+      next: uniqueSelector(nextEl),
       content: container + ' > ' + itemSel,
       click: !nextEl.getAttribute('href') || JUNK_HREF_RE.test(nextEl.getAttribute('href')),
     };
+    // The rule has to lead back to the element that was clicked, or it would
+    // quietly page somewhere else (a class path shared by every pager link).
+    const check = rule.next && findNext(document, location.href, { rule });
+    if (!check || check.el !== nextEl) {
+      toast('Couldn’t build a rule that finds that link. Write one in Settings instead.', 'err');
+      app.restart();
+      return;
+    }
     const rules = store.get('rules').filter((r) => r.url !== rule.url);
     rules.unshift(rule);
     store.set('rules', rules);

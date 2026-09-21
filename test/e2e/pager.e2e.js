@@ -354,6 +354,61 @@ test('a live item prepended every 1.5 s does not stop paging', async () => {
   await ctx.close();
 });
 
+test('picking Next on a Bootstrap pager saves a rule that pages forward', async () => {
+  const { pg, ctx, errors } = await open('/bs?page=2');
+  const logs = [];
+  pg.on('console', (m) => logs.push(m.text()));
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  const clickOn = async (locator) => {
+    await locator.scrollIntoViewIfNeeded();
+    const box = await locator.boundingBox();
+    await pg.mouse.move(box.x + 3, box.y + 3);
+    await pg.mouse.click(box.x + 3, box.y + 3);
+  };
+  await clickOn(pg.locator('nav a.page-link', { hasText: /^Next$/ }));
+  await clickOn(pg.locator('li.post p').first());
+  const saved = await pg.evaluate(() => {
+    const sel = window.__gm.rules[0].next;
+    let hits = [];
+    if (/^(\(|\/|\.\/|id\()/.test(sel)) {
+      const r = document.evaluate(sel, document, null, 7, null);
+      for (let i = 0; i < r.snapshotLength; i++) hits.push(r.snapshotItem(i));
+    } else hits = Array.from(document.querySelectorAll(sel));
+    return { sel, count: hits.length, text: hits[0] && hits[0].textContent.trim() };
+  });
+  assert.equal(saved.count, 1, 'the saved selector matches one element: ' + saved.sel);
+  assert.equal(saved.text, 'Next');
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: 15 }, (_, i) => 'Post ' + (i + 6)), 'pages 3 and 4 follow page 2; page 1 never loads');
+  assert.ok(logs.some((l) => /active: rule/.test(l)), 'the saved rule is what ran');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('the picker refuses a rule that would not lead back to the clicked link', async () => {
+  // "Next" goes to another site, which Onward never follows, so no rule can work.
+  const { pg, ctx, errors } = await open('/bs?page=2&ext=1');
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  const clickOn = async (locator) => {
+    await locator.scrollIntoViewIfNeeded();
+    const box = await locator.boundingBox();
+    await pg.mouse.move(box.x + 3, box.y + 3);
+    await pg.mouse.click(box.x + 3, box.y + 3);
+  };
+  await clickOn(pg.locator('nav a.page-link', { hasText: /^Next$/ }));
+  await clickOn(pg.locator('li.post p').first());
+  await pg.waitForTimeout(300);
+  const r = await pg.evaluate(() => ({
+    rules: window.__gm.rules || [],
+    toast: Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').some((t) => /Couldn’t build a rule/.test(t)),
+  }));
+  assert.deepEqual(r.rules, [], 'nothing stored');
+  assert.ok(r.toast, 'the user was told');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a picked rule runs even where the page says it is Discourse', async () => {
   const { pg, ctx, errors } = await open('/generator?page=1');
   await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });

@@ -121,6 +121,15 @@ function route(url) {
     return { body: page('Live ' + n, `<ul class="posts" id="list">${posts(n, LIVE_PER)}</ul>${pager('/live?page=', n, 'Next', LIVE_LAST)}
       <script>let k = 0; setInterval(() => { k++; const li = document.createElement('li'); li.className = 'post live'; li.innerHTML = '<a href="/live/' + k + '">Live ' + k + '</a><p>Breaking item ' + k + '.</p>'; document.getElementById('list').prepend(li); }, 1500);</script>`) };
   }
+  if (u.pathname === '/bs') {
+    // Bootstrap pagination: every link shares .page-item > .page-link, Previous included.
+    const item = (label, href, extra = '') => `<li class="page-item${extra}"><a class="page-link" href="${href}">${label}</a></li>`;
+    const nav = `<nav aria-label="Pages"><ul class="pagination">
+      ${n > 1 ? item('Previous', `/bs?page=${n - 1}`) : item('Previous', '#', ' disabled')}
+      ${Array.from({ length: LAST }, (_, i) => item(String(i + 1), `/bs?page=${i + 1}`, i + 1 === n ? ' active' : '')).join('')}
+      ${n < LAST ? item('Next', u.searchParams.has('ext') ? `https://elsewhere.example/bs?page=${n + 1}` : `/bs?page=${n + 1}`) : item('Next', '#', ' disabled')}</ul></nav>`;
+    return { body: page('Bootstrap ' + n, `<main><ul class="posts">${posts(n)}</ul>${nav}</main>`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

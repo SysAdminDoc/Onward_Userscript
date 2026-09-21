@@ -5,6 +5,7 @@
 - Turning Onward off, picking a new rule, or a site navigating while a page is still loading now cancels that load cleanly. Before, the old load could finish into a detached list and leave a "failed" bar behind.
 - The address bar only moves to page N once page N is actually on screen, and goes back to where you started when Onward removes its pages.
 - Onward stands by on sites that already load more as you scroll. Discourse and Flarum are recognised straight away. Anywhere else, Onward watches for a few seconds before its first page and each time you reach the bottom. If the site adds items by itself in that time, Onward takes its own pages back out so nothing is shown twice. A new menu command, "Run Onward here anyway", overrides this for the current page.
+- The picker now saves a selector that matches only the link you clicked. On Bootstrap-style pagers, where every link shares the same classes, the old rule loaded the previous page. It checks the rule leads back to that link before saving, and tells you when it can't build one.
 - Rules saved with the picker now work on sites that use a port number in their address. Before, the saved rule never matched them.
 - A rule you picked or wrote is used even on a page that looks like Discourse or Flarum.
 - The hidden iframe used for script-rendered pages is now sandboxed. A page that tries to break out of frames can no longer navigate your tab away, and audio or video inside it is muted and paused.
