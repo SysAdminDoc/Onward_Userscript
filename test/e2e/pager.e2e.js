@@ -55,6 +55,8 @@ const pageBars = () => ({
   posts: Array.from(document.querySelectorAll('#list > li.post > a')).map((a) => a.textContent),
 });
 
+const onwardText = () => Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' | ');
+
 const endBar = () => Array.from(document.querySelectorAll('[data-onward]'))
   .some((w) => /No more|End of results|No more items/.test(w.shadowRoot?.textContent || ''));
 
@@ -479,6 +481,70 @@ test('the picker refuses a rule that would not lead back to the clicked link', a
   await ctx.close();
 });
 
+async function pick(pg, nextLocator, itemLocator) {
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  for (const loc of [nextLocator, itemLocator]) {
+    await loc.scrollIntoViewIfNeeded();
+    const box = await loc.boundingBox();
+    await pg.mouse.move(box.x + 4, box.y + 4);
+    await pg.mouse.click(box.x + 4, box.y + 4);
+  }
+  await pg.waitForTimeout(200);
+  return pg.evaluate(() => (window.__gm.rules || [])[0] || null);
+}
+
+const matchCount = (sel) => {
+  if (/^(\(|\/|\.\/|id\()/.test(sel)) return document.evaluate(sel, document, null, 7, null).snapshotLength;
+  return document.querySelectorAll(sel).length;
+};
+
+test('picking the lower of two pagers (shared id, sliding numbers, &nbsp;) pages in order', async () => {
+  const { pg, ctx, errors, logs } = await open('/bs2?page=1');
+  const rule = await pick(pg, pg.locator('nav a.page-link', { hasText: /^Next/ }).last(), pg.locator('li.post p').first());
+  assert.ok(rule, 'a rule was saved');
+  assert.equal(await pg.evaluate(matchCount, rule.next), 1, 'the saved selector matches one element: ' + rule.next);
+  assert.doesNotMatch(rule.next, /nth-child/, 'no :nth-child steps, which shift between pages');
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: 6 * site.PER }, (_, i) => 'Post ' + (i + 1)), 'every page, in order');
+  assert.ok(logs.some((l) => /active: rule/.test(l)));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a picked list rule still works when page 1 has an extra list of the same class', async () => {
+  const { pg, ctx, errors } = await open('/featured?page=1');
+  const rule = await pick(pg, pg.locator('.pagination a.next'), pg.locator('div.list:not(.featured) div.item p').first());
+  assert.ok(rule, 'a rule was saved');
+  assert.doesNotMatch(rule.content, /nth-child/);
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  const items = await pg.evaluate(() => Array.from(document.querySelectorAll('div.list:not(.featured) > div.item > a')).map((a) => a.textContent));
+  assert.deepEqual(items, Array.from({ length: site.PER * site.LAST }, (_, i) => 'Item ' + (i + 1)));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a Next link inside a shadow root is refused instead of saved as its host', async () => {
+  const { pg, ctx, errors } = await open('/shadownext?page=1');
+  const rule = await pick(pg, pg.locator('page-nav'), pg.locator('li.post p').first());
+  assert.equal(rule, null, 'nothing saved');
+  assert.match(await pg.evaluate(onwardText), /Couldn’t build a rule/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a picked class that also marks Previous on later pages still pages forward', async () => {
+  // Start at the bare address: Previous on page 2 points at ?page=1, which is not a URL already seen.
+  const { pg, ctx, errors } = await open('/prevcls');
+  const rule = await pick(pg, pg.locator('a.pg', { hasText: 'Next' }), pg.locator('li.post p').first());
+  assert.ok(rule, 'a rule was saved');
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: site.PER * site.LAST }, (_, i) => 'Post ' + (i + 1)), 'never back to page 1');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a picked rule runs even where the page says it is Discourse', async () => {
   const { pg, ctx, errors } = await open('/generator?page=1');
   await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
@@ -535,7 +601,6 @@ test('a reader parked in the footer gets one page per scroll, not a burst', asyn
   await ctx.close();
 });
 
-const onwardText = () => Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' | ');
 
 test('Stop becomes Resume, and the menu tells stopped, paused and finished apart', async () => {
   const { pg, ctx, errors } = await open('/long?page=1');

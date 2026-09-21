@@ -216,6 +216,10 @@
     // 1. Explicit rule
     if (opts.rule && opts.rule.next) {
       for (const el of queryAll(doc, opts.rule.next)) {
+        // The same classes often mark Previous on later pages; never take that.
+        const rel = (el.getAttribute('rel') || '').toLowerCase().split(/\s+/);
+        if (rel.includes('prev') || (!rel.includes('next') && (PREV_ATTR_RE.test(attrText(el))
+            || labelOf(el).some((t) => PREV_RE.test(stripDecor(t)) && !NEXT_SET.has(stripDecor(t)))))) continue;
         const u = acceptUrl(el.getAttribute('href') || el.getAttribute('value'));
         if (u) return { url: u, el, score: 1000, how: 'rule' };
         if (opts.rule.click && isVisible(el, layout)) return { url: null, el, score: 1000, how: 'rule-click' };
@@ -1513,10 +1517,13 @@
   // ---------------------------------------------------------------------------
 
   function cssPath(el, pinned) {
-    if (el.id && !/\d{3,}/.test(el.id)) return '#' + CSS.escape(el.id);
+    // An id only anchors the path when it is stable-looking and unique; pages
+    // with a pager above and below the list often repeat one.
+    const byId = (n) => n.id && !/\d{3,}/.test(n.id) && n.ownerDocument.querySelectorAll('#' + CSS.escape(n.id)).length === 1;
+    if (byId(el)) return '#' + CSS.escape(el.id);
     const parts = [];
     for (let n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
-      if (n.id && !/\d{3,}/.test(n.id)) { parts.unshift('#' + CSS.escape(n.id)); break; }
+      if (byId(n)) { parts.unshift('#' + CSS.escape(n.id)); break; }
       const cls = (n.getAttribute('class') || '').split(/\s+/).filter((c) => c && !STATE_CLASS_RE.test(c)).slice(0, 2);
       let step = n.tagName.toLowerCase() + cls.map((c) => '.' + CSS.escape(c)).join('');
       if (pinned && n.parentElement) step += ':nth-child(' + (Array.prototype.indexOf.call(n.parentElement.children, n) + 1) + ')';
@@ -1534,19 +1541,28 @@
   /**
    * A selector that matches this element and nothing else on the page: the
    * class path first, then the element's label (which stays put from page to
-   * page), then :nth-child steps as a last resort.
+   * page), pinned by position when a pager repeats above and below the list,
+   * and :nth-child steps only as a last resort (they shift between pages).
    */
-  function uniqueSelector(el, cssOnly) {
-    const only = (sel) => { const m = queryAll(el.ownerDocument, sel); return m.length === 1 && m[0] === el; };
+  function uniqueSelector(el) {
+    const doc = el.ownerDocument;
+    const only = (sel) => { const m = queryAll(doc, sel); return m.length === 1 && m[0] === el; };
     const tag = el.tagName.toLowerCase();
     const candidates = [cssPath(el)];
-    if (!cssOnly) {
-      const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (text && text.length <= 60) candidates.push('//' + tag + '[normalize-space()=' + xpathString(text) + ']');
-      for (const a of ['aria-label', 'title', 'value']) {
-        const v = el.getAttribute(a);
-        if (v) candidates.push('//' + tag + '[@' + a + '=' + xpathString(v) + ']');
-      }
+    const tests = [];
+    // JS \s folds a no-break space into a space; XPath's normalize-space() does not, so translate it first.
+    const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text && text.length <= 60) tests.push("normalize-space(translate(., '\u00a0', ' '))=" + xpathString(text));
+    for (const a of ['aria-label', 'title', 'value']) {
+      const v = el.getAttribute(a);
+      if (v) tests.push('@' + a + '=' + xpathString(v));
+    }
+    for (const t of tests) {
+      const xp = '//' + tag + '[' + t + ']';
+      candidates.push(xp);
+      const hits = queryAll(doc, xp);
+      const i = hits.indexOf(el);
+      if (hits.length > 1 && i >= 0) candidates.push('(' + xp + ')[' + (i === hits.length - 1 ? 'last()' : i + 1) + ']');
     }
     candidates.push(cssPath(el, true));
     return candidates.find(only) || null;
@@ -1564,7 +1580,14 @@
       document.documentElement.appendChild(host);
       let current = null;
       const move = (e) => {
-        const el = document.elementFromPoint(e.clientX, e.clientY);
+        let el = document.elementFromPoint(e.clientX, e.clientY);
+        // Into open shadow roots, so a link in a web component is that link and
+        // not its host (a rule can't reach it, and saying so beats a useless rule).
+        while (el && el.shadowRoot) {
+          const inner = el.shadowRoot.elementFromPoint(e.clientX, e.clientY);
+          if (!inner || inner === el) break;
+          el = inner;
+        }
         if (!el || el === host || el.closest('[data-onward]')) return;
         current = el;
         const r = el.getBoundingClientRect();
@@ -1613,7 +1636,7 @@
       item = item.parentElement;
     }
     const sig = signature(item);
-    const container = uniqueSelector(item.parentElement, true) || cssPath(item.parentElement);
+    const container = cssPath(item.parentElement);
     const itemSel = sig.split('.').map((p, i) => (i === 0 ? p.toLowerCase() : '.' + CSS.escape(p))).join('');
     const rule = {
       name: location.hostname,

@@ -167,6 +167,35 @@ function route(url) {
     // Ten ordinary pages, for readers who park in the footer.
     return { body: page('Long ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/long?page=', n, 'Next', LONG_LAST)}`) };
   }
+  if (u.pathname === '/bs2') {
+    // A pager above and below the list, both id="pager", a sliding window of
+    // page numbers, Previous only after page 1, and "Next&nbsp;»".
+    const last = 6;
+    const item = (label, href, extra = '') => `<li class="page-item${extra}"><a class="page-link" href="${href}">${label}</a></li>`;
+    const nums = [];
+    for (let k = Math.max(1, n - 1); k <= Math.min(last, n + 2); k++) nums.push(item(String(k), `/bs2?page=${k}`, k === n ? ' active' : ''));
+    const nav = `<nav id="pager"><ul class="pagination">${n > 1 ? item('Previous', `/bs2?page=${n - 1}`) : ''}${nums.join('')}${n < last ? item('Next&nbsp;»', `/bs2?page=${n + 1}`) : ''}</ul></nav>`;
+    return { body: page('BS2 ' + n, `<main>${nav}<ul class="posts">${posts(n)}</ul>${nav}</main>`) };
+  }
+  if (u.pathname === '/featured') {
+    // Page 1 alone has a same-class "featured" list above the real one.
+    const list = (k0, label) => Array.from({ length: PER }, (_, i) => `<div class="item"><a href="/i/${k0 + i}">${label} ${k0 + i}</a><p>About item ${k0 + i}, long enough to count.</p></div>`).join('');
+    const featured = n === 1 ? `<div class="list featured">${list(100, 'Featured').split('</div>').slice(0, 6).join('</div>')}</div></div>` : '';
+    return { body: page('Featured ' + n, `<main>${featured}<div class="list">${list((n - 1) * PER + 1, 'Item')}</div>${pager('/featured?page=', n, 'Next')}</main>`) };
+  }
+  if (u.pathname === '/shadownext') {
+    // The pager lives in a web component's open shadow root, where no selector reaches.
+    return { body: page('Shadow ' + n, `<ul class="posts">${posts(n)}</ul><page-nav data-next="/shadownext?page=${n + 1}"></page-nav>
+      <script>customElements.define('page-nav', class extends HTMLElement { connectedCallback() {
+        const root = this.attachShadow({ mode: 'open' });
+        root.innerHTML = '<a href="' + this.dataset.next + '" style="display:inline-block;padding:10px">Next</a>';
+      } });</script>`) };
+  }
+  if (u.pathname === '/prevcls') {
+    // One class for both links: on page 1 it only marks Next, later it marks Previous too.
+    const links = (n > 1 ? `<a class="pg" href="/prevcls?page=${n - 1}">← Previous page</a> ` : '') + (n < LAST ? `<a class="pg" href="/prevcls?page=${n + 1}">Next page →</a>` : '');
+    return { body: page('Prevcls ' + n, `<ul class="posts">${posts(n)}</ul><div class="nav">${links}</div>`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };
