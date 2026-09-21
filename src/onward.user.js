@@ -1185,7 +1185,8 @@
       const tag = barTag(this.anchor ? this.anchor.parentNode : null);
       const outer = document.createElement(tag.outer);
       outer.setAttribute('data-onward', '');
-      outer.style.cssText = 'display:block;width:auto;grid-column:1/-1;flex:0 0 100%;float:none;clear:both;list-style:none;margin:0;padding:0;border:0;background:none;';
+      // Sites style their li/tr (fixed heights and the like); none of it should reach the bar.
+      outer.style.cssText = 'display:block;width:auto;height:auto;min-height:0;grid-column:1/-1;flex:0 0 100%;float:none;clear:both;list-style:none;margin:0;padding:0;border:0;background:none;';
       let mount = outer;
       if (tag.inner) {
         outer.style.display = 'table-row';
@@ -1223,7 +1224,9 @@
         kind === '' ? h('button', { title: 'Scroll to top', onclick: () => (this.scroller || win).scrollTo({ top: 0, behavior: 'smooth' }) }, '↑ Top') : null,
         kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.stop('Stopped.') }, 'Stop') : null,
       ].filter(Boolean));
-      sep.outer.style.display = !this.s.separators && kind === '' ? 'none' : sep.display;
+      // A hidden page bar keeps its (now zero-height) wrapper in the layout,
+      // so the address bar can still tell which page is in view.
+      sep.host.style.display = !this.s.separators && kind === '' ? 'none' : 'block';
     }
   }
 

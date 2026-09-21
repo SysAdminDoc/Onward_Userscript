@@ -74,6 +74,26 @@ test('blog: appends pages 2-4, fixes lazy images, updates URL, stops at the end'
   await ctx.close();
 });
 
+test('with page bars hidden, the address still follows the page in view', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => { window.__gm = { separators: false }; });
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  const search = async () => { await pg.waitForTimeout(400); return pg.evaluate(() => location.search); };
+  assert.equal(await search(), '?page=4', 'at the end');
+  const markers = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li[data-onward]')).map((m) => ({
+    height: m.getBoundingClientRect().height,
+    top: m.getBoundingClientRect().top + scrollY,
+    visible: !!m.querySelector('div') && getComputedStyle(m.querySelector('div')).display !== 'none',
+  })));
+  assert.ok(markers.slice(0, 3).every((m) => m.height === 0 && !m.visible), 'page bars take no space and show nothing');
+  await pg.evaluate(() => window.scrollTo(0, 0));
+  assert.equal(await search(), '?page=1', 'back at the top');
+  // Put page 3's marker just under the top of the window: page 3 is in view.
+  await pg.evaluate((y) => window.scrollTo(0, y), markers[1].top - 100);
+  assert.equal(await search(), '?page=3', 'mid-page');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('forum table in windows-1252 with a 下一页 link', async () => {
   const { pg, ctx, errors } = await open('/forum/1.html');
   assert.ok(await scrollToEnd(pg, endBar));

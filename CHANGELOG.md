@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- With "Show a bar between pages" turned off, the address bar follows the page you're reading again. Before, it jumped to the last page loaded and stayed there.
+- Page bars no longer pick up a site's list styles, such as a fixed row height.
 - Cancelling the picker puts Onward back to work on the page. Before, it stayed off until you reloaded.
 - A site rule is only used on pages where its selectors find something. Elsewhere on the same site Onward goes back to finding the next page itself, instead of doing nothing. Rules also honour `excludeUrl`, as AutoPagerize rules do.
 - Scrolling into the footer no longer loads every page at once. New items now appear where the footer was, and the next page waits until you scroll again.
