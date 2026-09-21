@@ -2227,7 +2227,8 @@
     const byId = (n) => n.id && !/\d{3,}/.test(n.id) && n.ownerDocument.querySelectorAll('#' + CSS.escape(n.id)).length === 1;
     if (byId(el)) return '#' + CSS.escape(el.id);
     const parts = [];
-    for (let n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+    const body = el.ownerDocument.body;
+    for (let n = el; n && n.nodeType === 1 && n !== body; n = n.parentElement) {
       if (byId(n)) { parts.unshift('#' + CSS.escape(n.id)); break; }
       const cls = (n.getAttribute('class') || '').split(/\s+/).filter((c) => c && !STATE_CLASS_RE.test(c)).slice(0, 2);
       let step = n.tagName.toLowerCase() + cls.map((c) => '.' + CSS.escape(c)).join('');
@@ -2563,7 +2564,7 @@
   }
 
   return {
-    VERSION, boot, hostListed, pathSkipped, nextByAddress, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
+    VERSION, boot, hostListed, pathSkipped, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
     itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });

@@ -404,6 +404,42 @@ test('nextByAddress: the page after this one, going by the address', () => {
   for (const [a, b] of no) assert.ok(!O.nextByAddress(b, a), a + ' -/-> ' + b);
 });
 
+test('picker selectors: cssPath and uniqueSelector', () => {
+  // The script calls CSS.escape as a browser global; jsdom 30 has it.
+  globalThis.CSS = new JSDOM('').window.CSS;
+  const one = (d, sel) => (/^(\(|\/)/.test(sel) ? d.evaluate(sel, d, null, 7, null).snapshotLength : d.querySelectorAll(sel).length);
+  // Bootstrap: every pager link shares .page-item > .page-link, Previous included.
+  const bs = dom(`<nav id="pages"><ul class="pagination">
+    <li class="page-item"><a class="page-link" href="?page=1">Previous</a></li><li class="page-item active"><a class="page-link" href="?page=2">2</a></li>
+    <li class="page-item"><a class="page-link" href="?page=3">3</a></li><li class="page-item"><a class="page-link" href="?page=3">Next&nbsp;»</a></li></ul></nav>`);
+  const nextLink = [...bs.querySelectorAll('a.page-link')].at(-1);
+  assert.equal(O.cssPath(nextLink), '#pages > ul.pagination > li.page-item > a.page-link', 'a stable unique id anchors the path; state classes are left out');
+  assert.equal(one(bs, O.cssPath(nextLink)), 4, 'which every pager link matches');
+  const sel = O.uniqueSelector(nextLink);
+  assert.match(sel, /^\/\/a\[normalize-space\(translate/, 'so the picker falls back to the label: ' + sel);
+  assert.equal(one(bs, sel), 1);
+  assert.equal(bs.evaluate(sel, bs, null, 9, null).singleNodeValue, nextLink);
+  // Two lists with the same classes: the pinned path tells them apart.
+  const dup = dom('<div class="list"><div class="item">a</div><div class="item">b</div></div><div class="list"><div class="item">c</div><div class="item">d</div></div>');
+  const c = dup.querySelectorAll('.item')[2];
+  assert.equal(O.cssPath(c), 'div.list > div.item');
+  assert.equal(one(dup, O.cssPath(c, true)), 1, O.cssPath(c, true));
+  assert.equal(dup.querySelector(O.cssPath(c, true)), c);
+  // Ids that look generated (3+ digits) or repeat on the page anchor nothing.
+  const ids = dom('<main id="post-12345"><div id="pager" class="nav"><a class="nx" href="/2">Next</a></div><div id="pager" class="nav"><a class="nx" href="/2">Next</a></div></main>');
+  const lower = ids.querySelectorAll('a.nx')[1];
+  assert.equal(O.cssPath(lower), 'main > div.nav > a.nx');
+  const u = O.uniqueSelector(lower);
+  assert.equal(one(ids, u), 1, u);
+  assert.equal(ids.evaluate(u, ids, null, 9, null).singleNodeValue, lower);
+  // A state class on the path (the current page's li.active) is left out too.
+  assert.equal(O.cssPath(bs.querySelector('li.active > a')), '#pages > ul.pagination > li.page-item > a.page-link');
+  // An id that starts with a digit is fine to anchor on, escaped.
+  const digit = dom('<div id="2nd"><a class="nx" href="/3">Next</a></div>');
+  assert.equal(O.cssPath(digit.querySelector('a')), '#\\32 nd > a.nx');
+  assert.equal(one(digit, O.cssPath(digit.querySelector('a'))), 1);
+});
+
 test('rules from a downloaded list never click; rules you write can', () => {
   const clicky = [{ url: '^https://shop\\.example/', next: 'button.buy', click: true }];
   assert.equal(O.normalizeRules(clicky)[0].click, true, 'a rule written in Settings keeps click');
