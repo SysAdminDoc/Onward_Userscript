@@ -30,7 +30,7 @@ The script updates itself from this repo. Firefox needs no extra step.
 - **Stays out of the way on sites that already scroll forever.** Discourse and Flarum forums are left alone. On other sites Onward watches for a few seconds before its first page and whenever you reach the bottom. If the site adds items by itself, Onward takes its own pages back out and stands by.
 - **Is polite to servers.** At most 40 pages per visit by default. A failed request pauses loading until you click Retry. If added pages don't make the page any longer, it stops rather than loading forever.
 
-Each added page gets a slim bar with the page number, its URL, and buttons to jump to the top or stop. Once stopped, the bars offer Resume instead. As you scroll, the address bar follows the page you're reading, so refreshing or sharing the link lands in the right place.
+Each added page gets a slim bar with the page number, its URL, and buttons to jump to the top, to stop, or to skip to the footer (loading then waits 30 seconds, so you can reach it). Once stopped, the bars offer Resume instead. As you scroll, the address bar follows the page you're reading, so refreshing or sharing the link lands in the right place.
 
 ## Menu commands
 
@@ -85,6 +85,8 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 | Show a bar between pages | on | Status bars (loading, errors, end) always show. |
 | Update the address bar while scrolling | on | Uses `history.replaceState`, so the back button isn't flooded. |
 | Loading mode | auto | `auto` fetches first and falls back to an iframe when needed. |
+| Load pages | as I scroll | "when I click" loads nothing as you scroll. The bar at the end of the list gets a "Load page N" button instead, which keeps the footer in reach. |
+| Load pages on this site | as set above | The same choice for the site you're on only. |
 | Run on | every site | "only sites I list" keeps Onward off everywhere except the sites below. |
 | Sites to run on | empty | One host per line, used with "only sites I list". Subdomains are covered. |
 | Turned off on these sites | empty | The hosts you turned off with the toggle command, one per line. Delete a line to let Onward run there again. |

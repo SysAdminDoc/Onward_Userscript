@@ -2010,6 +2010,66 @@ test('the AutoPagerize API: events, the page element class, and pause requests',
   await ctx.close();
 });
 
+for (const where of ['everywhere', 'on this site']) {
+  test(`manual mode (${where}): scrolling loads nothing, the bar's button loads the next page`, async () => {
+    const { pg, ctx, errors } = await open('/blog?page=1', (w) => {
+      window.__gm = w === 'everywhere' ? { loadPages: 'click' } : { hostLoadPages: { '127.0.0.1': 'click' } };
+    }, where);
+    for (let i = 0; i < 12; i++) {
+      await pg.keyboard.press('End');
+      await pg.waitForTimeout(300);
+    }
+    assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER, 'nothing loaded by scrolling');
+    await pg.getByRole('button', { name: 'Load page 2', exact: true }).click();
+    await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 10);
+    await pg.getByRole('button', { name: 'Load page 3', exact: true }).click();
+    await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 15);
+    await pg.getByRole('button', { name: 'Load page 4', exact: true }).click();
+    await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 20);
+    await pg.waitForTimeout(300);
+    assert.equal(await pg.getByRole('button', { name: /^Load page/ }).count(), 0, 'no button after the last page');
+    assert.match(await pg.evaluate(onwardText), /No more pages/);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
+test('Settings sets loading by click everywhere or for this site only', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('combobox', { name: /^Load pages on 127\.0\.0\.1/ }).selectOption('click');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  assert.deepEqual(await pg.evaluate(() => [window.__gm.loadPages, window.__gm.hostLoadPages]), ['auto', { '127.0.0.1': 'click' }]);
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('combobox', { name: /^Load pages on 127\.0\.0\.1/ }).selectOption('');
+  await pg.getByRole('combobox', { name: /^Load pages\b(?! on)/ }).selectOption('click');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  assert.deepEqual(await pg.evaluate(() => [window.__gm.loadPages, window.__gm.hostLoadPages]), ['click', {}]);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Skip to footer jumps past the list and holds loading off', async () => {
+  const { pg, ctx, errors } = await open('/long?page=1', () => { window.__gm = { skipFooterMs: 4000 }; });
+  const posts = () => document.querySelectorAll('#list > li.post').length;
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 10), 'page 2 is in');
+  await pg.evaluate(() => window.scrollTo(0, 0));
+  await pg.getByRole('button', { name: 'Skip to footer' }).first().click();
+  await pg.waitForTimeout(200);
+  assert.ok(await pg.evaluate(() => document.getElementById('list').getBoundingClientRect().bottom <= 0), 'the list is above the window');
+  const held = await pg.evaluate(posts);
+  for (let i = 0; i < 8; i++) {
+    await pg.mouse.wheel(0, 200);
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(posts), held, 'nothing loaded while skipping');
+  await pg.waitForTimeout(2000); // past the 4 s hold
+  await pg.keyboard.press('End');
+  await pg.waitForFunction((n) => document.querySelectorAll('#list > li.post').length > n, held, { timeout: 8000 });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

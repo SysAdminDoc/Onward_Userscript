@@ -43,6 +43,9 @@
     separators: true,      // show a page bar between pages
     updateUrl: true,       // replaceState to the page currently in view
     mode: 'auto',          // auto | fetch | iframe
+    loadPages: 'auto',     // auto | click: load as you scroll, or only when you press the bar's button
+    hostLoadPages: {},     // per-host override of loadPages: { host: 'auto' | 'click' }
+    skipFooterMs: 30000,   // how long "Skip to footer" holds loading off
     runOn: 'all',          // all | listed (only the hosts in allowHosts)
     allowHosts: [],
     // Pages Onward stays off: appending pages broke checkout and account flows for other auto-pagers.
@@ -1287,6 +1290,9 @@
       this.onScroll = this.onScroll.bind(this);
       this.onInput = this.onInput.bind(this);
       this.inputAt = 0;
+      // Pages load only when you press the bar's button, for everyone who'd rather reach the footer.
+      this.manual = ((settings.hostLoadPages || {})[location.hostname] || settings.loadPages) === 'click';
+      this.skipUntil = 0;
     }
 
     /** Detect next link + content on the live page. Returns false when there's nothing to do. */
@@ -1325,7 +1331,26 @@
       win.addEventListener('resize', this.onScroll, { passive: true });
       for (const t of INPUT_EVENTS) win.addEventListener(t, this.onInput, { passive: true, capture: true });
       statusRegions();
+      this.showManualBar();
       this.onScroll();
+    }
+
+    /** In manual mode, the bar at the end of the list that loads the next page. */
+    showManualBar() {
+      if (this.manualBar) { this.removeBar(this.manualBar); this.manualBar = null; }
+      if (!this.manual || this.stopped || this.destroyed || !this.next) return;
+      const n = this.page + 1;
+      this.manualBar = this.addBar(this.next.url, 'Page ' + n + ' is next.', 'manual', () => this.loadNext(), 'Load page ' + n);
+    }
+
+    /** Scroll past the list and hold loading off for a while, so the footer can be reached. */
+    skipToFooter() {
+      this.skipUntil = Date.now() + this.s.skipFooterMs;
+      const m = this.metrics();
+      const past = this.listEndBottom(m) - m.top + 1;
+      if (this.scroller && this.scroller.isConnected) this.scroller.scrollTop += past;
+      else win.scrollTo(0, win.scrollY + past);
+      toast(`Loading waits ${Math.round(this.s.skipFooterMs / 1000)} s so you can reach the footer.`, 'ok');
     }
 
     // Stopping ends loading; the scroll listener stays so the address bar keeps
@@ -1339,6 +1364,7 @@
         this.userStopped = false;
         if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
       }
+      if (this.manualBar) { this.removeBar(this.manualBar); this.manualBar = null; }
       if (reason) {
         this.addBar(null, reason, kind || 'end');
         announce(reason);
@@ -1367,8 +1393,10 @@
       if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
       if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
       this.refreshBars();
-      // Pressed at the end of the list, Resume loads the next page as asked; elsewhere paging carries on as you scroll.
-      if (this.nearEnd()) this.loadNext();
+      this.showManualBar();
+      // Pressed at the end of the list, Resume loads the next page as asked (in
+      // manual mode the bar's button does that); elsewhere paging carries on as you scroll.
+      if (!this.manual && this.nearEnd()) this.loadNext();
       else this.onScroll();
     }
 
@@ -1565,6 +1593,8 @@
         // watching after Onward stops too: the site may load its own copy then.
         if (m.remaining < m.view * 0.25) this.openWatch();
         if (this.stopped || this.paused) return;
+        // Manual mode loads only from the bar's button; "Skip to footer" holds loading off.
+        if (this.manual || this.skipUntil > Date.now()) return;
         if (this.awaitScroll) {
           // A page landed while the reader sat below the list: the next one
           // waits for them. The page has to move, and move because of the
@@ -1663,6 +1693,7 @@
       this.busy = true;
       this.paused = false;
       if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
+      if (this.manualBar) { this.removeBar(this.manualBar); this.manualBar = null; }
       const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + (this.batch ? ` (${this.batch.i} of ${this.batch.n})` : '') + '…', 'loading');
       // Stop cancels this load; so does destroy().
       const ctl = new AbortController();
@@ -1678,8 +1709,9 @@
         this.waitingTurn = false;
         if (this.destroyed) return;
         if (ctl.signal.aborted) throw new Error('stopped');
-        // Late images may have filled the page while this load waited its turn.
-        if (auto && !this.asked && !this.nearEnd()) {
+        // Late images may have filled the page while this load waited its turn,
+        // or the reader skipped to the footer (which holds loading off).
+        if (auto && !this.asked && (this.skipUntil > Date.now() || !this.nearEnd())) {
           this.removeBar(loading);
           this.busy = false;
           return;
@@ -1717,6 +1749,7 @@
         if (this.loadCtl === ctl) this.loadCtl = null;
       }
       this.busy = false;
+      this.showManualBar();
       // Keep filling short pages, gently, once the new page's images have their size:
       // images without a set height make every new page look short until they load.
       if (!this.stopped) Promise.all([this.imagesSettled(1500), new Promise((r) => setTimeout(r, 400))]).then(this.onScroll);
@@ -1943,6 +1976,7 @@
         kind === '' ? h('button', { title: 'Scroll to top', onclick: () => (this.scroller || win).scrollTo({ top: 0, behavior: 'smooth' }) }, '↑ Top') : null,
         kind === '' && this.userStopped ? h('button', { title: 'Carry on loading pages', onclick: () => this.resume() }, 'Resume') : null,
         kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.userStop() }, 'Stop') : null,
+        kind === '' || kind === 'manual' ? h('button', { title: 'Jump past the list; loading waits a while', onclick: () => this.skipToFooter() }, 'Skip to footer') : null,
       ].filter(Boolean));
       // A hidden page bar leaves the layout (a zero-height wrapper still takes
       // a grid row, flex space or a table row); syncUrl uses the page's items.
@@ -2035,6 +2069,9 @@
     const num = (key, step) => h('input', { type: 'number', step, value: s[key], 'data-k': key });
     const chk = (key) => { const c = h('input', { type: 'checkbox', 'data-k': key }); c.checked = !!s[key]; return c; };
     const modeSel = h('select', { 'data-k': 'mode' }, ...['auto', 'fetch', 'iframe'].map((m) => { const o = h('option', { value: m }, m); o.selected = s.mode === m; return o; }));
+    const choice = (k, v, pairs, current) => h('select', k ? { 'data-k': k } : {}, ...pairs.map(([val, text]) => { const o = h('option', { value: val }, text); o.selected = current === val; return o; }));
+    const loadSel = choice('loadPages', null, [['auto', 'as I scroll'], ['click', 'when I click']], s.loadPages);
+    const hostLoadSel = choice(null, null, [['', 'as set above'], ['auto', 'as I scroll'], ['click', 'when I click']], s.hostLoadPages[location.hostname] || '');
     const runOnSel = h('select', { 'data-k': 'runOn' }, ...[['all', 'every site'], ['listed', 'only sites I list']].map(([v, t]) => { const o = h('option', { value: v }, t); o.selected = s.runOn === v; return o; }));
     const allow = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Sites to run on' }); allow.value = s.allowHosts.join('\n');
     const offHosts = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Turned off on these sites' }); offHosts.value = s.disabledHosts.join('\n');
@@ -2079,6 +2116,10 @@
       store.set('exclude', excl.value.split(/\s+/).filter(Boolean));
       store.set('disabledHosts', offHosts.value.split(/\s+/).filter(Boolean));
       store.set('allowHosts', allow.value.split(/\s+/).filter(Boolean));
+      const hostLoad = Object.assign({}, s.hostLoadPages);
+      if (hostLoadSel.value) hostLoad[location.hostname] = hostLoadSel.value;
+      else delete hostLoad[location.hostname];
+      store.set('hostLoadPages', hostLoad);
       store.set('sources', srcs.value.split(/\s+/).filter(Boolean));
       close();
       toast('Settings saved. Reload the page to apply them.', 'ok');
@@ -2092,6 +2133,8 @@
       h('label', {}, 'Show a bar between pages', chk('separators')),
       h('label', {}, 'Update the address bar while scrolling', chk('updateUrl')),
       h('label', {}, 'Loading mode', modeSel),
+      h('label', {}, 'Load pages', loadSel),
+      h('label', {}, 'Load pages on ' + location.hostname, hostLoadSel),
       h('label', {}, 'Run on', runOnSel),
       h('div', { class: 'blk' }, 'Sites to run on, one per line (with “only sites I list”)', allow),
       h('div', { class: 'blk' }, 'Turned off on these sites, one per line (the toggle command adds them)', offHosts),
