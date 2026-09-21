@@ -284,6 +284,18 @@ test('a rule\'s next link is taken unless it really is Previous', () => {
   assert.equal(pick('<a class="n" href="/2">Entradas anteriores</a>'), 'Entradas anteriores', 'Spanish WordPress: older entries is next');
 });
 
+test('the default pages to stay off, and the host list', () => {
+  const skip = (path) => O.pathSkipped("/(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/._-]|$)", path);
+  for (const path of ['/checkout', '/checkout/step-2', '/cart', '/Cart/', '/basket.php', '/login', '/log-in', '/users/sign_in', '/signin', '/SignUp',
+    '/register', '/account', '/account/orders', '/account-settings', '/password/reset']) assert.ok(skip(path), path);
+  for (const path of ['/', '/blog/page/2/', '/cartoons/page/3', '/accounts/list', '/forum/tips-for-login', '/registered-users?page=2', '/passwords-101'])
+    assert.ok(!skip(path), path);
+  assert.equal(O.pathSkipped('', '/checkout'), false, 'an empty pattern skips nothing');
+  assert.equal(O.pathSkipped('([bad', '/checkout'), false, 'a broken pattern skips nothing');
+  assert.ok(O.hostListed(['example.com'], 'www.example.com'));
+  assert.ok(!O.hostListed(['example.com'], 'badexample.com'));
+});
+
 test('rules from a downloaded list never click; rules you write can', () => {
   const clicky = [{ url: '^https://shop\\.example/', next: 'button.buy', click: true }];
   assert.equal(O.normalizeRules(clicky)[0].click, true, 'a rule written in Settings keeps click');

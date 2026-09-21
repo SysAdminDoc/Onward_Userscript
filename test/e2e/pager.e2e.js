@@ -320,6 +320,50 @@ test('a Discourse generator meta keeps Onward off until forced', async () => {
 const loadingBar = () => Array.from(document.querySelectorAll('[data-onward]'))
   .some((w) => /Loading page/.test(w.shadowRoot?.textContent || ''));
 
+test('a checkout page is left alone unless you run Onward there anyway', async () => {
+  const { pg, ctx, errors } = await open('/checkout?page=1');
+  for (let i = 0; i < 16; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('[data-onward]').length), 0, 'inactive');
+  await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+  assert.ok(await scrollToEnd(pg, endBar), 'forced, it pages to the end');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('with "only sites I list", Onward waits for the site to be listed', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => { window.__gm = { runOn: 'listed', allowHosts: ['example.org'] }; });
+  for (let i = 0; i < 12; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('[data-onward]').length), 0, 'inactive on an unlisted site');
+  await pg.evaluate(() => { window.__menu['Toggle Onward on this site'](); });
+  assert.deepEqual(await pg.evaluate(() => window.__gm.allowHosts), ['example.org', '127.0.0.1'], 'the toggle listed it');
+  assert.ok(await scrollToEnd(pg, endBar), 'and it pages');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Settings saves where Onward runs, and refuses a broken pattern', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('combobox', { name: /^Run on/ }).selectOption('listed');
+  await pg.getByRole('textbox', { name: 'Sites to run on' }).fill('example.org\nnews.example.com');
+  const skip = pg.getByRole('textbox', { name: 'Stay off pages whose path matches' });
+  await skip.fill('/(checkout');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  assert.match(await pg.evaluate(() => document.querySelector('[data-onward-panel]').shadowRoot.querySelector('.err').textContent), /valid regular expression/);
+  await skip.fill('/(checkout|basket)');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  const gm = await pg.evaluate(() => ({ runOn: window.__gm.runOn, allowHosts: window.__gm.allowHosts, skipPaths: window.__gm.skipPaths }));
+  assert.deepEqual(gm, { runOn: 'listed', allowHosts: ['example.org', 'news.example.com'], skipPaths: '/(checkout|basket)' });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('turning Onward off mid-load leaves nothing behind', async () => {
   const { pg, ctx, errors } = await open('/slow?page=1');
   assert.ok(await scrollToEnd(pg, loadingBar), 'a slow load is in flight');

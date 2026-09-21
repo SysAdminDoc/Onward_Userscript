@@ -43,6 +43,10 @@
     separators: true,      // show a page bar between pages
     updateUrl: true,       // replaceState to the page currently in view
     mode: 'auto',          // auto | fetch | iframe
+    runOn: 'all',          // all | listed (only the hosts in allowHosts)
+    allowHosts: [],
+    // Pages Onward stays off: appending pages broke checkout and account flows for other auto-pagers.
+    skipPaths: '/(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/._-]|$)',
     disabledHosts: [],
     exclude: [
       'mail.google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
@@ -70,6 +74,17 @@
       catch (e) { console.warn(TAG, 'could not save', key, e); }
     },
   };
+
+  /** host is one of the listed hosts, or a subdomain of one. */
+  function hostListed(list, host) {
+    return list.some((x) => host === x || host.endsWith('.' + x));
+  }
+
+  /** The path is one Onward stays off (skipPaths, case-insensitive). A broken pattern skips nothing. */
+  function pathSkipped(pattern, path) {
+    if (!pattern) return false;
+    try { return new RegExp(pattern, 'i').test(path); } catch (e) { return false; }
+  }
 
   function loadSettings() {
     const s = {};
@@ -1698,6 +1713,9 @@
     const num = (key, step) => h('input', { type: 'number', step, value: s[key], 'data-k': key });
     const chk = (key) => { const c = h('input', { type: 'checkbox', 'data-k': key }); c.checked = !!s[key]; return c; };
     const modeSel = h('select', { 'data-k': 'mode' }, ...['auto', 'fetch', 'iframe'].map((m) => { const o = h('option', { value: m }, m); o.selected = s.mode === m; return o; }));
+    const runOnSel = h('select', { 'data-k': 'runOn' }, ...[['all', 'every site'], ['listed', 'only sites I list']].map(([v, t]) => { const o = h('option', { value: v }, t); o.selected = s.runOn === v; return o; }));
+    const allow = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Sites to run on' }); allow.value = s.allowHosts.join('\n');
+    const skip = h('input', { type: 'text', spellcheck: 'false', value: s.skipPaths, 'data-k': 'skipPaths', 'aria-label': 'Stay off pages whose path matches', style: 'width:100%;margin-top:6px;font-family:ui-monospace,Consolas,monospace;font-size:12px' });
     const rules = h('textarea', { spellcheck: 'false' }); rules.value = JSON.stringify(s.rules, null, 2);
     const excl = h('textarea', { spellcheck: 'false' }); excl.value = s.exclude.join('\n');
     const srcs = h('textarea', { spellcheck: 'false', style: 'min-height:50px' }); srcs.value = s.sources.join('\n');
@@ -1708,6 +1726,7 @@
       try { parsed = JSON.parse(rules.value || '[]'); } catch (e) { err.textContent = 'Site rules are not valid JSON: ' + e.message; return; }
       const normalized = normalizeRules(parsed);
       if (normalized.length !== (Array.isArray(parsed) ? parsed.length : 0)) { err.textContent = 'Every rule needs a valid "url" regex (and "excludeUrl", when set).'; return; }
+      try { new RegExp(skip.value); } catch (e) { err.textContent = 'The pages to stay off need a valid regular expression: ' + e.message; return; }
       for (const el of sr.querySelectorAll('[data-k]')) {
         const k = el.getAttribute('data-k');
         let v = el.value;
@@ -1718,6 +1737,7 @@
       }
       store.set('rules', normalized);
       store.set('exclude', excl.value.split(/\s+/).filter(Boolean));
+      store.set('allowHosts', allow.value.split(/\s+/).filter(Boolean));
       store.set('sources', srcs.value.split(/\s+/).filter(Boolean));
       close();
       toast('Settings saved. Reload the page to apply them.', 'ok');
@@ -1731,6 +1751,10 @@
       h('label', {}, 'Show a bar between pages', chk('separators')),
       h('label', {}, 'Update the address bar while scrolling', chk('updateUrl')),
       h('label', {}, 'Loading mode', modeSel),
+      h('label', {}, 'Run on', runOnSel),
+      h('div', { class: 'blk' }, 'Sites to run on, one per line (with “only sites I list”)', allow),
+      h('div', { class: 'blk' }, 'Stay off pages whose path matches', skip,
+        h('div', { class: 'hint' }, 'A regular expression. Leave it empty to run on every page.')),
       h('div', { class: 'blk' }, 'Site rules (JSON)', rules,
         h('div', { class: 'hint' }, '[{"url": "^https://example\\\\.com/list", "next": "a.next", "content": "#results > .item"}]. CSS or XPath. Optional: "insert", "mode", "click".')),
       h('div', { class: 'blk' }, 'Never run on these hosts', excl),
@@ -2001,7 +2025,10 @@
         const s = loadSettings();
         const host = location.hostname;
         if (s.disabledHosts.includes(host)) { this.status = 'disabled on this site'; return; }
-        if (s.exclude.some((x) => host === x || host.endsWith('.' + x))) { this.status = 'excluded host'; return; }
+        if (hostListed(s.exclude, host)) { this.status = 'excluded host'; return; }
+        // "Run Onward here anyway" gets past these two.
+        if (!opts.force && s.runOn === 'listed' && !hostListed(s.allowHosts, host)) { this.status = 'not on your list of sites'; return; }
+        if (!opts.force && pathSkipped(s.skipPaths, location.pathname)) { this.status = 'a checkout, sign-in or account page'; return; }
         const gen = this.gen;
         const retry = () => {
           // Many lists are rendered after load; look again a couple of times.
@@ -2043,10 +2070,24 @@
 
     if (typeof GM_registerMenuCommand === 'function') {
       GM_registerMenuCommand('Toggle Onward on this site', () => {
-        const list = store.get('disabledHosts').slice();
-        const i = list.indexOf(location.hostname);
-        if (i >= 0) { list.splice(i, 1); store.set('disabledHosts', list); toast('Enabled on ' + location.hostname, 'ok'); app.restart(); }
-        else { list.push(location.hostname); store.set('disabledHosts', list); if (app.pager) app.pager.destroy(); app.pager = null; toast('Disabled on ' + location.hostname); }
+        const host = location.hostname;
+        // With "only sites I list", the toggle puts the site on the list or takes it off.
+        const listed = store.get('runOn') === 'listed';
+        const key = listed ? 'allowHosts' : 'disabledHosts';
+        const list = store.get(key).slice();
+        const i = list.indexOf(host);
+        if (i >= 0) list.splice(i, 1);
+        else list.push(host);
+        store.set(key, list);
+        if (listed ? i < 0 : i >= 0) {
+          toast('Enabled on ' + host, 'ok');
+          app.restart();
+        } else {
+          if (app.pager) app.pager.destroy();
+          app.pager = null;
+          app.status = listed ? 'not on your list of sites' : 'disabled on this site';
+          toast('Disabled on ' + host);
+        }
       });
       // The pager, ready for a load you asked for; or null, having said why not.
       const pagerForLoad = () => {
@@ -2104,7 +2145,7 @@
   }
 
   return {
-    VERSION, boot, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
+    VERSION, boot, hostListed, pathSkipped, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
     itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, itemKey, splitRepeats, signature, barTag,
   };
 });

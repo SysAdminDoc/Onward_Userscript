@@ -292,6 +292,10 @@ function route(url) {
   if (u.pathname === '/gridlist') {
     return { body: page('Grid ' + n, `<ul class="posts" style="display:grid;grid-template-columns:repeat(5,1fr);row-gap:30px;margin:0;padding:0">${posts(n)}</ul>${pager('/gridlist?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/checkout') {
+    // A paged list on a checkout page (order history, saved items): Onward stays off by default.
+    return { body: page('Checkout ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/checkout?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };
