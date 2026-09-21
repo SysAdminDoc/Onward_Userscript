@@ -686,6 +686,33 @@ for (const api of [true, false]) {
   });
 }
 
+test('Retry after a failed page loads it, instead of ending paging', async () => {
+  // Page 2 is empty once (a failure), then fine: Retry must fetch it again. Fetch mode,
+  // since auto mode would quietly retry an empty page in an iframe.
+  const { pg, ctx, errors } = await open('/emptyonce?page=1', () => { window.__gm = { mode: 'fetch' }; });
+  const failed = () => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /failed/.test(w.shadowRoot?.textContent || ''));
+  assert.ok(await scrollToEnd(pg, failed, 40), 'page 2 failed once');
+  await pg.getByRole('button', { name: 'Retry', exact: true }).click();
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.doesNotMatch(await pg.evaluate(onwardText), /No more pages\.[^]*Page 3/, 'did not end early');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('in iframe mode a page that never answers times out, and Retry tries it again', async () => {
+  const { pg, ctx, errors } = await open('/hang?page=1', () => { window.__gm = { mode: 'iframe' }; });
+  const timedOut = () => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /failed \(timed out\)\. Paused\./.test(w.shadowRoot?.textContent || ''));
+  assert.ok(await scrollToEnd(pg, timedOut, 90), 'the frame gave up with "timed out"');
+  await pg.getByRole('button', { name: 'Retry', exact: true }).click();
+  await pg.waitForTimeout(1500);
+  const text = await pg.evaluate(onwardText);
+  assert.doesNotMatch(text, /No more pages/, 'the retry did not end paging');
+  assert.match(text, /Loading page 2/, 'it is trying page 2 again');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a redirect back to a page already shown ends paging', async () => {
   const { pg, ctx, errors } = await open('/redir?page=1');
   assert.ok(await scrollToEnd(pg, endBar), 'paging ended');

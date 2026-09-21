@@ -221,6 +221,12 @@ function route(url) {
         document.querySelector('#app ul.posts').innerHTML = ${filtered};
       };</script>`) };
   }
+  if (u.pathname === '/emptyonce') {
+    // Page 2 comes back empty the first time only.
+    hits.emptyonce[n] = (hits.emptyonce[n] || 0) + 1;
+    const list = n === 2 && hits.emptyonce[n] === 1 ? '' : posts(n);
+    return { body: page('Empty once ' + n, `<ul class="posts">${list}</ul>${pager('/emptyonce?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };
@@ -272,6 +278,6 @@ function start() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-const hits = { flaky: {}, aborted: [], rules: 0, spaced: [] };
+const hits = { flaky: {}, aborted: [], rules: 0, spaced: [], emptyonce: {} };
 
 module.exports = { start, hits, PER, LAST, LIVE_PER, LIVE_LAST };

@@ -755,13 +755,17 @@
       // One controller per request: the pager's signal or the timeout aborts it.
       const ctl = new AbortController();
       let timedOut = false;
-      const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, FETCH_TIMEOUT_MS);
+      const expire = () => { timedOut = true; ctl.abort(); };
+      let timer = setTimeout(expire, FETCH_TIMEOUT_MS);
       const follow = () => ctl.abort();
       if (signal) {
         if (signal.aborted) ctl.abort();
         else signal.addEventListener('abort', follow, { once: true });
       }
       return fetch(url, { credentials: 'include', redirect: 'follow', signal: ctl.signal }).then((r) => {
+        // The 20 s is for an answer; a big page that is arriving gets longer to finish.
+        clearTimeout(timer);
+        timer = setTimeout(expire, 3 * FETCH_TIMEOUT_MS);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.arrayBuffer().then((buf) => ({ bytes: new Uint8Array(buf), type: r.headers.get('content-type'), finalUrl: r.url || url }));
       }).catch((e) => {
@@ -825,9 +829,14 @@
         } catch (e) { finish(new Error('iframe blocked')); }
       }, 300);
       const timer = setTimeout(() => {
-        try { if (f.contentDocument && f.contentDocument.body) return finish(); } catch (e) { /* blocked */ }
-        finish(new Error('iframe timed out'));
-      }, timeoutMs || 12000);
+        try {
+          // A page that loaded but never grew items is handed back; a frame
+          // still on its blank placeholder never answered.
+          const d = f.contentDocument;
+          if (d && d.body && d.location.href !== 'about:blank' && d.readyState !== 'loading') return finish();
+        } catch (e) { /* blocked */ }
+        finish(new Error('timed out'));
+      }, timeoutMs || FETCH_TIMEOUT_MS);
       if (signal) signal.addEventListener('abort', () => finish(new Error('aborted')), { once: true });
       f.src = url;
       document.body.appendChild(f);
@@ -1274,7 +1283,7 @@
       const signal = this.abort.signal;
       if (this.mode === 'iframe') {
         ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
-        try { finalUrl = doc.location.href; } catch (e) { /* keep the requested URL */ }
+        try { if (/^https?:/.test(doc.location.href)) finalUrl = doc.location.href; } catch (e) { /* keep the requested URL */ }
       } else {
         const r = await fetchBytes(url, signal);
         if (this.destroyed) return;
@@ -1295,9 +1304,10 @@
           this.removeBar(bar);
           return this.stop('No more pages.');
         }
-        this.seen.add(stripHash(url));
-        this.seen.add(stripHash(finalUrl));
-        const next = this.findNextIn(doc, finalUrl);
+        // The page being loaded counts as seen for finding its next link, but it
+        // only joins 'seen' once it is in: a failed attempt must stay retryable.
+        const seenNow = new Set(this.seen).add(stripHash(url)).add(stripHash(finalUrl));
+        const next = this.findNextIn(doc, finalUrl, seenNow);
         const items = extractItems(doc, this, next && next.el);
         if (!items.length) throw new Error('no content found on the next page');
         // A page that is (nearly) all repeats is the site sending the same page
@@ -1305,6 +1315,8 @@
         const { fresh, repeatShare } = splitRepeats(items, this.itemKeys);
         if (!fresh.length || repeatShare >= 0.9) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
         for (const it of fresh) this.itemKeys.add(itemKey(it));
+        this.seen.add(stripHash(url));
+        this.seen.add(stripHash(finalUrl));
 
         const prepared = prepareItems(fresh, finalUrl);
         const frag = document.createDocumentFragment();
@@ -1343,18 +1355,18 @@
       }
     }
 
-    findNextIn(doc, url) {
+    findNextIn(doc, url, seen) {
       // Same spot as last time first, then the general heuristics.
       if (this.nextPath && !this.rule) {
         const el = resolvePath(doc, this.nextPath);
         const href = el && el.getAttribute('href');
         const u = href && absUrl(href, url);
-        if (u && safeOrigin(u) === safeOrigin(url) && !this.seen.has(stripHash(u)) && stripHash(u) !== stripHash(url)
+        if (u && safeOrigin(u) === safeOrigin(url) && !seen.has(stripHash(u)) && stripHash(u) !== stripHash(url)
             && labelOf(el).join(' ') === labelOf(this.next.el).join(' ')) {
           return { url: u, el, how: 'path' };
         }
       }
-      return findNext(doc, url, { rule: this.rule, seen: this.seen, layout: false });
+      return findNext(doc, url, { rule: this.rule, seen, layout: false });
     }
 
     async clickMore(bar) {
