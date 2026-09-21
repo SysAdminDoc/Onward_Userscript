@@ -909,6 +909,19 @@ test('page requests are spaced out, by the configured gap', async () => {
   await ctx.close();
 });
 
+test('Stop while a page waits its turn sends no request', async () => {
+  const { pg, ctx, errors } = await open('/spaced?page=1', () => { window.__gm = { spacing: 5000 }; });
+  site.hits.spaced.length = 0;
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10
+    && Array.from(document.querySelectorAll('[data-onward]')).some((w) => /Loading page 3/.test(w.shadowRoot?.textContent || '')), 60), 'page 3 is waiting out the gap');
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  await pg.waitForTimeout(6000);
+  assert.equal(site.hits.spaced.length, 1, 'only page 2 was ever asked for');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), 10);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 for (const api of [true, false]) {
   test(`a pushState route change restarts Onward (${api ? 'Navigation API' : 'polling fallback'})`, async () => {
     const { pg, ctx, errors, logs } = await open('/spapush?page=1', api ? null : () => {
