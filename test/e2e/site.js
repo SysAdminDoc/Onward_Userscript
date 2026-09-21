@@ -241,6 +241,12 @@ function route(url) {
     });</script>`;
     return { body: page('Shadow list ' + n, `<x-list></x-list>${define}${pager('/shadowlist?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/lazyrepeat') {
+    // The site's own lazy loader swaps src on screen; past page 2 the server sends page 1 again.
+    const loader = '<script>for (const img of document.querySelectorAll("img[data-src]")) { img.src = img.dataset.src; img.removeAttribute("data-src"); }</script>';
+    const k = n > 2 ? 1 : n;
+    return { body: page('Lazy repeat ' + n, `<ul class="posts">${posts(k)}</ul>${pager('/lazyrepeat?page=', n, 'Next')}${loader}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

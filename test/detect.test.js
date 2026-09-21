@@ -322,6 +322,53 @@ test('item keys: same item, same key; different item or picture, different key',
   assert.notEqual(O.itemKey(pics[0]), O.itemKey(pics[1]));
 });
 
+test('repeats: a page repeated after the site lazy-loaded its images is still caught', () => {
+  // Page 1 on screen: the site's loader has swapped src (and here dropped data-src).
+  const live = dom('<ul><li class="post"><a href="/p/1">One</a><img src="/img/1.jpg"></li>'
+    + '<li class="pic"><img src="/img/2.jpg"></li></ul>').querySelectorAll('li');
+  // The same page fetched again, before any loader ran.
+  const fetched = dom('<ul><li class="post"><a href="/p/1">One</a><img src="data:image/gif;base64,R0lGOD" data-src="/img/1.jpg"></li>'
+    + '<li class="pic"><img src="/placeholder.gif" data-src="/img/2.jpg"></li></ul>').querySelectorAll('li');
+  assert.deepEqual([...live].map(O.itemKey), [...fetched].map(O.itemKey));
+  const seen = new Set([...live].map(O.itemKey));
+  assert.equal(O.splitRepeats([...fetched], seen).repeatShare, 1);
+  // A loader that picks a sized copy changes the address itself; an item with text is known by its text and link.
+  const sized = dom('<ul><li class="post"><a href="/p/1">One</a><img src="/img/1.jpg?w=640"></li></ul>').querySelector('li');
+  assert.equal(O.itemKey(sized), O.itemKey(fetched[0]));
+});
+
+test('repeats: picture-only items with one placeholder each keep their own key', () => {
+  const pics = (from) => [...dom(`<ul>${[0, 1, 2].map((i) => `<li><img src="/blank.gif" data-original="/img/${from + i}.jpg"></li>`).join('')}</ul>`).querySelectorAll('li')];
+  const first = pics(1);
+  assert.equal(new Set(first.map(O.itemKey)).size, 3);
+  const second = O.splitRepeats(pics(4), new Set(first.map(O.itemKey)));
+  assert.equal(second.fresh.length, 3, 'a page of new pictures is all new');
+  assert.equal(second.repeatShare, 0);
+  // With nothing but a srcset, the srcset tells them apart, past a placeholder src.
+  const sets = [...dom('<ul><li><img srcset="/a.jpg 1x"></li><li><img srcset="/b.jpg 1x"></li></ul>').querySelectorAll('li')];
+  assert.notEqual(O.itemKey(sets[0]), O.itemKey(sets[1]));
+  const lazySets = [...dom('<ul><li><img src="/blank.gif" data-srcset="/a.jpg 1x"></li><li><img src="/blank.gif" data-srcset="/b.jpg 1x"></li></ul>').querySelectorAll('li')];
+  assert.notEqual(O.itemKey(lazySets[0]), O.itemKey(lazySets[1]));
+});
+
+test('repeats: layout filler is kept on every page and does not count', () => {
+  // Hacker News-style rows: story, details, spacer.
+  const rows = (start) => [...dom(`<table><tbody>${[0, 1, 2].map((i) => `<tr class="athing"><td><a href="/item?id=${start + i}">Story ${start + i}</a></td></tr>`
+    + `<tr><td>${start + i} points</td></tr><tr class="spacer" style="height:5px"></tr>`).join('')}</tbody></table>`, BASE).querySelectorAll('tr')];
+  const seen = new Set(rows(1).map(O.itemKey).filter(Boolean));
+  const second = O.splitRepeats(rows(4), seen);
+  assert.equal(second.fresh.filter((r) => r.className === 'spacer').length, 3, 'every spacer row stays');
+  assert.equal(second.repeatShare, 0);
+  const again = O.splitRepeats(rows(1), seen);
+  assert.deepEqual(again.fresh.map((r) => r.className), ['spacer', 'spacer', 'spacer'], 'only filler is new on a repeated page');
+  assert.equal(again.repeatShare, 1, 'which is still all repeats');
+  // Bootstrap clearfix divs in a float grid.
+  const grid = [...dom('<div class="row"><div class="col"><a href="/a">A</a></div><div class="clearfix"></div><div class="col"><a href="/b">B</a></div><div class="clearfix"></div></div>').querySelectorAll('.row > div')];
+  assert.equal(O.itemKey(grid[1]), null);
+  assert.equal(O.splitRepeats(grid, new Set(grid.map(O.itemKey).filter(Boolean))).fresh.length, 2, 'both clearfix divs stay');
+  assert.equal(O.splitRepeats([grid[1]], new Set()).repeatShare, 1, 'a page of nothing but filler has nothing new');
+});
+
 test('repeats: a long first post on every page does not end paging', () => {
   const long = 'A long opening post that every page repeats. '.repeat(140); // about 6,300 characters
   const page = (start) => dom(`<ul><li class="post"><p>${long}</p></li>${items(4, 'post', start)}</ul>`).querySelectorAll('ul > li');

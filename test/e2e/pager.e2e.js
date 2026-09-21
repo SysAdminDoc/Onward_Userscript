@@ -727,6 +727,16 @@ test('an item repeated from an earlier page is dropped, and paging goes on', asy
   await ctx.close();
 });
 
+test('page 1 served again after the site lazy-loaded its images ends paging', async () => {
+  const { pg, ctx, errors } = await open('/lazyrepeat?page=1');
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paging ended');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: 2 * site.PER }, (_, i) => 'Post ' + (i + 1)), 'pages 1 and 2, and page 1 not again');
+  assert.match(await pg.evaluate(onwardText), /a page we already have/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a refresh hidden in page 2 does not navigate the tab', async () => {
   const { pg, ctx, errors } = await open('/metaref?page=1', () => { window.__alive = true; });
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');

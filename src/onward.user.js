@@ -669,24 +669,60 @@
     return new DOMParser().parseFromString(input, 'text/html');
   }
 
+  /** An image's own address: the lazy-load one first, since the site's loader
+   * may have swapped src on the live page but not in a fetched copy. */
+  function imageUrl(img) {
+    for (const a of LAZY_ATTRS) {
+      const v = img.getAttribute(a);
+      if (v && !/^data:/.test(v)) return v;
+    }
+    const src = img.getAttribute('src');
+    if (src && !PLACEHOLDER_RE.test(src)) return src;
+    return img.getAttribute('data-srcset') || img.getAttribute('srcset') || src || '';
+  }
+
   /**
-   * One item's identity: all of its text plus its first link and image, so
-   * picture-only items don't all look alike. Read before prepareItems()
-   * rewrites URLs, so every page is keyed the same way.
+   * One item's identity: its text and first link, or for a picture-only item
+   * its first image. Items with none of these (spacer rows, clearfix divs) are
+   * layout, not content: they get no key, so they are never taken for repeats.
+   * Read before prepareItems() rewrites URLs, so every page is keyed the same way.
    */
   function itemKey(el) {
+    const text = normalize(el.textContent);
     const a = el.matches('a[href]') ? el : el.querySelector('a[href]');
-    const img = el.matches('img[src]') ? el : el.querySelector('img[src]');
-    const s = normalize(el.textContent) + '|' + (a ? a.getAttribute('href') : '') + '|' + (img ? img.getAttribute('src') : '');
+    let s = text + '|' + (a ? a.getAttribute('href') : '');
+    if (!text && !a) {
+      const img = el.matches('img') ? el : el.querySelector('img');
+      const url = img && imageUrl(img);
+      if (!url) return null;
+      s += '|' + url;
+    }
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
     return (h >>> 0).toString(36) + ':' + s.length;
   }
 
-  /** Items not seen on earlier pages, and the share that were. */
+  /** Items not seen on earlier pages, and the share of content items that were. Layout filler is always kept. */
   function splitRepeats(items, seenKeys) {
-    const fresh = items.filter((it) => !seenKeys.has(itemKey(it)));
-    return { fresh, repeatShare: items.length ? 1 - fresh.length / items.length : 1 };
+    let content = 0;
+    let repeats = 0;
+    const fresh = items.filter((it) => {
+      const k = itemKey(it);
+      if (k === null) return true;
+      content++;
+      if (!seenKeys.has(k)) return true;
+      repeats++;
+      return false;
+    });
+    return { fresh, repeatShare: content ? repeats / content : 1 };
+  }
+
+  /** Remembers the keys of items now on screen. */
+  function rememberItems(items, keys) {
+    for (const it of items) {
+      const k = itemKey(it);
+      if (k !== null) keys.add(k);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -996,7 +1032,7 @@
       this.container = content.container;
       this.path = describePath(content.container);
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
-      for (const it of content.items) this.itemKeys.add(itemKey(it));
+      rememberItems(content.items, this.itemKeys);
       this.buttonMode = next.url === null;
       // Anchor: new pages go right after the last current item.
       const last = content.items[content.items.length - 1];
@@ -1343,7 +1379,7 @@
         // again; a few repeats (products that moved) are just dropped.
         const { fresh, repeatShare } = splitRepeats(items, this.itemKeys);
         if (!fresh.length || repeatShare >= 0.9) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
-        for (const it of fresh) this.itemKeys.add(itemKey(it));
+        rememberItems(fresh, this.itemKeys);
         this.seen.add(stripHash(url));
         this.seen.add(stripHash(finalUrl));
 
