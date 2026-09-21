@@ -20,9 +20,9 @@ const posts = (n, per = PER) => Array.from({ length: per }, (_, i) => {
 
 // Articles whose images reserve no height and arrive 700 ms late, so the
 // list keeps growing above a reader after each page lands.
-const lateArts = (n) => Array.from({ length: PER }, (_, i) => {
+const lateArts = (n, h) => Array.from({ length: PER }, (_, i) => {
   const k = (n - 1) * PER + i + 1;
-  return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}"></article>`;
+  return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}${h ? '&h=' + h : ''}"></article>`;
 }).join('');
 
 const pager = (base, n, nextLabel, last = LAST) => `<div class="pagination">${Array.from({ length: last }, (_, i) => i + 1)
@@ -168,7 +168,12 @@ function route(url) {
     return { body: page('Latefoot ' + n, `<div class="posts" id="list">${lateArts(n)}</div>${pager('/latefoot?page=', n, 'Next', LONG_LAST)}`).replace('</body>', extra + '</body>') };
   }
   if (u.pathname === '/slow.svg') {
-    return { body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="160"></svg>', type: 'image/svg+xml', delay: 700 };
+    const h = Number(u.searchParams.get('h')) || 160;
+    return { body: `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="${h}"></svg>`, type: 'image/svg+xml', delay: 700 };
+  }
+  if (u.pathname === '/tallimg') {
+    // /lateimg with images 3000 px tall: one page fills any screen once they arrive.
+    return { body: page('Tall ' + n, `<div class="posts" id="list">${lateArts(n, 3000)}</div>${pager('/tallimg?page=', n, 'Next', LONG_LAST)}`) };
   }
   if (u.pathname === '/shortfoot') {
     // A footer shorter than a page, so one page is enough to pull the list end into view.

@@ -1055,6 +1055,42 @@ test('a reader who reaches the very bottom as a batch lands gets the next one', 
   await ctx.close();
 });
 
+test('the next check waits for the new page\'s images before calling it short', async () => {
+  // No gap between requests, so only the wait for images can hold page 3 back.
+  const { pg, ctx, errors } = await open('/tallimg?page=1', () => { window.__gm = { spacing: 0 }; });
+  const count = () => document.querySelectorAll('#list > article.post').length;
+  await pg.waitForTimeout(1200); // page 1's own images arrive
+  // Near the end of the list, but still inside it.
+  await pg.evaluate(() => window.scrollTo(0, document.getElementById('list').getBoundingClientRect().bottom + scrollY - 900));
+  await pg.waitForFunction(() => document.querySelectorAll('#list > article.post').length >= 10, null, { timeout: 10000 });
+  await pg.waitForTimeout(3000);
+  assert.equal(await pg.evaluate(count), 10, 'page 2 filled the screen once its images came, so no page 3');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a load the scroll asked for is dropped if the reader moved away while it waited its turn', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => { window.__gm = { spacing: 3000, threshold: 0.3 }; });
+  const posts = () => document.querySelectorAll('ul.posts > li.post').length;
+  // Forced, so there's no first-load probe; page 2 comes from the menu while the reader is at the top.
+  await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 10);
+  // Near the end of the list, still inside it: page 3 is asked for and waits out the 3 s gap...
+  await pg.evaluate(() => window.scrollTo(0, document.querySelector('ul.posts').getBoundingClientRect().bottom + scrollY - innerHeight + 50));
+  await pg.waitForFunction(() => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /Loading page 3/.test(w.shadowRoot?.textContent || '')));
+  // ...and the reader goes back up before it's sent.
+  await pg.evaluate(() => window.scrollTo(0, 0));
+  await pg.waitForTimeout(3500);
+  assert.equal(await pg.evaluate(posts), 10, 'page 3 was not loaded');
+  assert.doesNotMatch(await pg.evaluate(onwardText), /Loading page/);
+  // A load you ask for is never dropped.
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 15, null, { timeout: 8000 });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a parked reader with a short footer still gets one page per scroll', async () => {
   const { pg, ctx, errors } = await open('/shortfoot?page=1');
   const r = await parkedReader(pg, '/shortfoot', () => document.querySelectorAll('#list > li.post').length);

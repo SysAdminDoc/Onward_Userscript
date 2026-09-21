@@ -1298,9 +1298,7 @@
           if (!steadyScroll && this.inputAt <= w.since) return;
           this.awaitScroll = null;
         }
-        // Tall footers shouldn't delay loading: the end of the list counts too.
-        const toListEnd = this.listEndBottom(m) - (m.top + m.view);
-        if (Math.min(m.remaining, toListEnd) >= m.view * this.s.threshold) return;
+        if (!this.nearEnd(m)) return;
         // The first time near the end, give the site PROBE_MS to show whether
         // it loads more by itself before Onward adds anything.
         if (!this.opts.force && !this.probed) {
@@ -1313,7 +1311,35 @@
           if (Date.now() - this.probeStart < PROBE_MS) return;
           this.probed = true;
         }
-        this.loadNext();
+        this.loadNext(true);
+      });
+    }
+
+    /** Close enough to the end to want the next page. Tall footers shouldn't delay loading, so the end of the list counts too. */
+    nearEnd(m) {
+      m = m || this.metrics();
+      const toListEnd = this.listEndBottom(m) - (m.top + m.view);
+      return Math.min(m.remaining, toListEnd) < m.view * this.s.threshold;
+    }
+
+    /** Resolves when the last page's images have loaded or failed (natively lazy ones aside), or after ms. */
+    imagesSettled(ms) {
+      const pending = [];
+      for (const n of this.lastPageNodes || []) {
+        if (n.nodeType !== 1 || !n.isConnected) continue;
+        for (const img of n.tagName === 'IMG' ? [n] : n.querySelectorAll('img')) {
+          if (!img.complete && img.loading !== 'lazy') pending.push(img);
+        }
+      }
+      if (!pending.length) return Promise.resolve();
+      return new Promise((resolve) => {
+        let left = pending.length;
+        const done = () => { if (--left === 0) resolve(); };
+        for (const img of pending) {
+          img.addEventListener('load', done, { once: true });
+          img.addEventListener('error', done, { once: true });
+        }
+        setTimeout(resolve, ms);
       });
     }
 
@@ -1336,7 +1362,8 @@
       }
     }
 
-    async loadNext() {
+    // auto: asked for by scrolling, so dropped if the page no longer needs it.
+    async loadNext(auto) {
       if (this.busy || this.stopped) return;
       if (this.page >= this.s.maxPages) return this.stop(`Stopped after ${this.s.maxPages} pages (change the limit in settings).`, 'end', 'limit');
       this.busy = true;
@@ -1354,6 +1381,12 @@
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         if (this.destroyed) return;
         if (ctl.signal.aborted) throw new Error('stopped');
+        // Late images may have filled the page while this load waited its turn.
+        if (auto && !this.nearEnd()) {
+          this.removeBar(loading);
+          this.busy = false;
+          return;
+        }
         this.lastRequestAt = Date.now();
         // A load-more click can't be taken back, but that mode has no page bars, so no Stop either.
         if (this.buttonMode) await this.clickMore(loading);
@@ -1384,7 +1417,9 @@
         if (this.loadCtl === ctl) this.loadCtl = null;
       }
       this.busy = false;
-      if (!this.stopped) setTimeout(this.onScroll, 400); // keep filling short pages, gently
+      // Keep filling short pages, gently, once the new page's images have their size:
+      // images without a set height make every new page look short until they load.
+      if (!this.stopped) Promise.all([this.imagesSettled(1500), new Promise((r) => setTimeout(r, 400))]).then(this.onScroll);
     }
 
     async appendPage(url, bar, signal) {
@@ -1438,6 +1473,7 @@
         const prepared = prepareItems(fresh, finalUrl);
         const frag = document.createDocumentFragment();
         for (const it of prepared) frag.appendChild(document.importNode(it, true));
+        this.lastPageNodes = Array.from(frag.childNodes);
         this.page++;
         this.setBar(bar, url, 'Page ' + this.page, '');
         const heightBefore = this.metrics().height;
@@ -1449,6 +1485,7 @@
           shell.setAttribute('data-onward-page', String(this.page));
           shell.appendChild(frag);
           this.anchor.parentNode.insertBefore(shell, this.anchor);
+          this.lastPageNodes = [shell];
           this.lastInserted = shell;
           this.inserted.push(shell);
           this.ours.add(shell);
@@ -1498,6 +1535,7 @@
       const height = document.documentElement.scrollHeight;
       // From here on the list grows because of our clicks, not by itself.
       if (this.nativeObserver) { this.nativeObserver.disconnect(); this.nativeObserver = null; }
+      this.lastPageNodes = [];
       const below = this.readerBelowList();
       const release = this.holdAnchoring();
       el.click();
