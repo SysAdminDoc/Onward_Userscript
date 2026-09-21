@@ -1262,7 +1262,7 @@
       this.awaitScroll = { pos: this.scrollPos(), height: m.height, since: Date.now() };
     }
 
-    /** The reader's own input: the wheel, touch, scroll keys, the scrollbar, middle-click autoscroll. */
+    /** The reader's own input: the wheel, touch, scroll keys, the scrollbar. */
     onInput(e) {
       if (e.type === 'keydown') {
         const t = e.composedPath()[0];
@@ -1270,7 +1270,7 @@
       } else if (e.type === 'pointerdown') {
         const sc = this.scroller;
         const onBar = e.clientX >= document.documentElement.clientWidth || (sc && e.target === sc && e.offsetX >= sc.clientWidth);
-        if (!onBar && e.button !== 1) return;
+        if (!onBar) return;
       }
       this.inputAt = Date.now();
       this.onScroll();
@@ -1332,16 +1332,20 @@
         if (this.stopped || this.paused) return;
         if (this.awaitScroll) {
           // A page landed while the reader sat below the list: the next one
-          // waits for them. Their input since then counts, and so does a scroll
-          // while the page kept its height (a scrollbar drag the browser sends no
-          // events for). A scroll that comes with growth is the browser keeping
-          // its place as images and widgets load, however the numbers add up.
+          // waits for them. The page has to move, and move because of the
+          // reader: with its height steady (a scrollbar drag the browser sends
+          // no events for), or right after their wheel, touch, keys or
+          // scrollbar. Input alone isn't enough: a wheel over a side panel
+          // moves only the panel. A scroll that comes with growth and no input
+          // is the browser keeping its place as images and widgets load.
           const w = this.awaitScroll;
           const pos = this.scrollPos();
-          const steadyScroll = Math.abs(pos - w.pos) >= 1 && Math.abs(m.height - w.height) < 1;
+          const moved = Math.abs(pos - w.pos) >= 1;
+          const steady = Math.abs(m.height - w.height) < 1;
+          const byReader = this.inputAt > w.since && Date.now() - this.inputAt < 1000;
           w.pos = pos;
           w.height = m.height;
-          if (!steadyScroll && this.inputAt <= w.since) return;
+          if (!moved || !(steady || byReader)) return;
           this.awaitScroll = null;
         }
         if (!this.nearEnd(m)) return;

@@ -1096,7 +1096,7 @@ test('a parked reader gets one page even while images above keep growing', async
   await ctx.close();
 });
 
-test('a parked reader gets one page while the page shifts, and one more per key or click', async () => {
+test('a parked reader gets one page while the page shifts, and one more per key', async () => {
   // Late images above the reader and a widget below grow in the same frames,
   // and the widget grows on every scroll, so only real input shows the reader.
   const { pg, ctx, errors } = await open('/latefoot?page=1');
@@ -1115,9 +1115,58 @@ test('a parked reader gets one page while the page shifts, and one more per key 
   assert.equal(await pg.evaluate(count), 3 * site.PER, 'the End key brings the next page');
   await pg.waitForTimeout(3000);
   assert.equal(await pg.evaluate(count), 3 * site.PER, 'and only one: input before a page lands does not count for the next');
-  await pg.mouse.click(600, 500, { button: 'middle' });
-  await pg.waitForTimeout(2500);
-  assert.equal(await pg.evaluate(count), 4 * site.PER, 'a middle click (autoscroll) brings the next');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a wheel over a side panel is not the reader asking for more', async () => {
+  const { pg, ctx, errors } = await open('/parkbox?page=1');
+  const count = () => document.querySelectorAll('#list > li.post').length;
+  const r = await parkedReader(pg, '/parkbox', count);
+  assert.equal(r.later, 2 * site.PER, 'one page while parked');
+  // Over the fixed panel, which scrolls itself and keeps the page still.
+  await pg.mouse.move(1100, 250);
+  for (let i = 0; i < 4; i++) {
+    await pg.mouse.wheel(0, 150);
+    await pg.waitForTimeout(250);
+  }
+  assert.ok(await pg.evaluate(() => document.getElementById('box').scrollTop) > 0, 'the panel scrolled');
+  await pg.waitForTimeout(1500);
+  assert.equal(await pg.evaluate(count), 2 * site.PER, 'no page for a wheel that moved only the panel');
+  await pg.mouse.move(400, 400);
+  await pg.mouse.wheel(0, 400);
+  await pg.waitForFunction(() => document.querySelectorAll('#list > li.post').length === 15, null, { timeout: 8000 });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+// Parks the reader, waits for page 2, then runs act() as soon as it lands.
+const parkThen = async (pg, act) => {
+  await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await pg.waitForFunction(() => document.querySelectorAll('#list > article.post').length === 10, null, { timeout: 8000 });
+  await act();
+};
+
+test('input a while before the page shifts is not the reader moving', async () => {
+  // Images land 2.5 s after the page and shift it; the only input came 2 s before that.
+  const { pg, ctx, errors } = await open('/parklate?d=2500&page=1');
+  await parkThen(pg, async () => {
+    await pg.mouse.move(1100, 250);
+    await pg.mouse.wheel(0, 150);
+  });
+  await pg.waitForTimeout(4500);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > article.post').length), 10, 'still one page');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a click on the page is not the reader moving, even just before it shifts', async () => {
+  const { pg, ctx, errors } = await open('/parklate?d=700&page=1');
+  await parkThen(pg, async () => {
+    await pg.mouse.click(1100, 250);
+  });
+  await pg.waitForTimeout(3500);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > article.post').length), 10, 'still one page');
   assert.deepEqual(errors, []);
   await ctx.close();
 });

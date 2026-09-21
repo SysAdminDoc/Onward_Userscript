@@ -20,9 +20,9 @@ const posts = (n, per = PER) => Array.from({ length: per }, (_, i) => {
 
 // Articles whose images reserve no height and arrive 700 ms late, so the
 // list keeps growing above a reader after each page lands.
-const lateArts = (n, h) => Array.from({ length: PER }, (_, i) => {
+const lateArts = (n, h, d) => Array.from({ length: PER }, (_, i) => {
   const k = (n - 1) * PER + i + 1;
-  return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}${h ? '&h=' + h : ''}"></article>`;
+  return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}${h ? '&h=' + h : ''}${d ? '&d=' + d : ''}"></article>`;
 }).join('');
 
 const pager = (base, n, nextLabel, last = LAST) => `<div class="pagination">${Array.from({ length: last }, (_, i) => i + 1)
@@ -169,7 +169,7 @@ function route(url, req) {
   }
   if (u.pathname === '/slow.svg') {
     const h = Number(u.searchParams.get('h')) || 160;
-    return { body: `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="${h}"></svg>`, type: 'image/svg+xml', delay: 700 };
+    return { body: `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="${h}"></svg>`, type: 'image/svg+xml', delay: Number(u.searchParams.get('d')) || 700 };
   }
   if (u.pathname === '/tallimg') {
     // /lateimg with images 3000 px tall: one page fills any screen once they arrive.
@@ -336,6 +336,17 @@ function route(url, req) {
           document.getElementById('pg').innerHTML = ${newPager};
         }, 500);
       };</script>`) };
+  }
+  if (u.pathname === '/parklate') {
+    // Late images (d ms) that shift the page after it lands, and a side panel that keeps the wheel to itself.
+    const d = Number(u.searchParams.get('d')) || 700;
+    const box = '<div id="box" style="position:fixed;right:0;top:100px;width:220px;height:300px;overflow:auto;overscroll-behavior:contain;background:#eef"><div style="height:3000px">box</div></div>';
+    return { body: page('Parklate ' + n, `<div class="posts" id="list">${lateArts(n, 0, d)}</div>${pager('/parklate?d=' + d + '&page=', n, 'Next', LONG_LAST)}`).replace('<footer>footer</footer>', `<footer>footer</footer>${box}`) };
+  }
+  if (u.pathname === '/parkbox') {
+    // /long plus a fixed side panel (a table of contents, a chat) that keeps the wheel to itself.
+    const box = '<div id="box" style="position:fixed;right:0;top:100px;width:220px;height:300px;overflow:auto;overscroll-behavior:contain;background:#eef"><div style="height:3000px">box</div></div>';
+    return { body: page('Parkbox ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/parkbox?page=', n, 'Next', LONG_LAST)}`).replace('<footer>footer</footer>', `<footer>footer</footer>${box}`) };
   }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
