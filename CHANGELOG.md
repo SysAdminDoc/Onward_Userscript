@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- The hidden iframe used for script-rendered pages is now sandboxed. A page that tries to break out of frames can no longer navigate your tab away, and audio or video inside it is muted and paused.
+
 ## [0.1.0] (2026-09-21)
 
 First release.

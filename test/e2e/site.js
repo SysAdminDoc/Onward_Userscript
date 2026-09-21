@@ -18,6 +18,17 @@ const pager = (base, n, nextLabel) => `<div class="pagination">${Array.from({ le
   .map((k) => (k === n ? `<span class="current">${k}</span>` : `<a href="${base}${k}">${k}</a>`)).join(' ')}
   ${n < LAST ? `<a class="next" href="${base}${n + 1}">${nextLabel}</a>` : ''}</div>`;
 
+// One second of 8 kHz, 8-bit mono silence.
+function wav() {
+  const samples = 8000;
+  const b = Buffer.alloc(44 + samples, 128);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + samples, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(8000, 24); b.writeUInt32LE(8000, 28); b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34);
+  b.write('data', 36); b.writeUInt32LE(samples, 40);
+  return b;
+}
+
 function route(url) {
   const u = new URL(url, 'http://x');
   const n = Math.max(1, Number(u.searchParams.get('page') || (/(\d+)/.exec(u.pathname) || [])[1] || 1));
@@ -39,6 +50,25 @@ function route(url) {
     return { body: page('SPA ' + n, `<section class="grid" id="cards"></section>${pager('/spa?page=', n, 'Next')}
       <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }</script>`) };
   }
+  if (u.pathname === '/buster') {
+    // Script-rendered like /spa, so Onward needs the iframe fallback, plus a
+    // frame buster in its own script and an autoplaying track that reports
+    // its muted state to the parent.
+    const items = JSON.stringify(Array.from({ length: PER }, (_, i) => `Card ${(n - 1) * PER + i + 1}`));
+    return { body: page('Buster ' + n, `<section class="grid" id="cards"></section>${pager('/buster?page=', n, 'Next')}
+      <audio id="snd" src="/tone.wav" autoplay loop></audio>
+      <script>if (top !== self) top.location.href = '/buster?page=1&busted=1';</script>
+      <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }
+        // Report from the setter itself: volumechange is queued as a task and
+        // Onward removes the frame before that task would run.
+        const snd = document.getElementById('snd');
+        const muted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
+        Object.defineProperty(snd, 'muted', { configurable: true, get() { return muted.get.call(this); }, set(v) {
+          muted.set.call(this, v);
+          if (top !== self) parent.postMessage({ type: 'media', page: location.search, muted: muted.get.call(this), paused: this.paused }, '*');
+        } });</script>`) };
+  }
+  if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/more') {
     return { body: page('Load more', `<ul class="posts" id="list">${posts(1)}</ul><button class="load-more" id="lm">Load more</button>
       <script>let n = 1; document.getElementById('lm').onclick = () => { n++; setTimeout(() => {

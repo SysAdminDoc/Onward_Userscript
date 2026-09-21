@@ -682,6 +682,10 @@
       f.setAttribute('aria-hidden', 'true');
       f.tabIndex = -1;
       f.style.cssText = 'position:fixed;left:-10000px;top:0;width:1280px;height:900px;border:0;visibility:hidden;';
+      // No top navigation (frame busters), no popups, no autoplay. Scripts and
+      // same-origin access stay, since the point is to let the page render.
+      f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+      f.setAttribute('allow', "autoplay 'none'");
       let done = false;
       const finish = (err) => {
         if (done) return;
@@ -689,11 +693,13 @@
         clearInterval(poll);
         clearTimeout(timer);
         if (err) { f.remove(); reject(err); return; }
+        silence(f.contentDocument);
         resolve({ doc: f.contentDocument, dispose: () => f.remove() });
       };
       const poll = setInterval(() => {
         try {
           const d = f.contentDocument;
+          if (d) silence(d);
           if (d && d.readyState !== 'loading' && d.location.href !== 'about:blank' && ready(d)) finish();
         } catch (e) { finish(new Error('iframe blocked')); }
       }, 300);
@@ -704,6 +710,13 @@
       f.src = url;
       document.body.appendChild(f);
     });
+  }
+
+  function silence(doc) {
+    for (const m of doc.querySelectorAll('video, audio')) {
+      m.muted = true;
+      if (!m.paused) m.pause();
+    }
   }
 
   // ---------------------------------------------------------------------------

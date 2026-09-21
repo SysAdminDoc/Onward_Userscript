@@ -26,12 +26,13 @@ test.after(async () => {
   server?.close();
 });
 
-async function open(url) {
+async function open(url, prepare) {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
   const errors = [];
   pg.on('pageerror', (e) => errors.push(e.message));
   await pg.goto(base + url, { waitUntil: 'load' });
+  if (prepare) await pg.evaluate(prepare);
   await pg.addScriptTag({ content: SHIM + SCRIPT });
   return { pg, ctx, errors };
 }
@@ -90,6 +91,45 @@ test('script-rendered grid falls back to an iframe', async () => {
   assert.match(cards.at(-1), /^Card 20/);
   assert.equal(await pg.evaluate(() => document.querySelectorAll('iframe').length), 0, 'iframes cleaned up');
   assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('iframe fallback is sandboxed and silenced, and a frame buster cannot take the tab', async () => {
+  const { pg, ctx, errors } = await open('/buster?page=1', () => {
+    window.__alive = true;
+    window.__frames = [];
+    window.__media = [];
+    new MutationObserver((ms) => {
+      for (const m of ms) for (const n of m.addedNodes) {
+        if (n.tagName === 'IFRAME') window.__frames.push({ sandbox: n.getAttribute('sandbox'), allow: n.getAttribute('allow') });
+      }
+    }).observe(document.documentElement, { childList: true, subtree: true });
+    window.addEventListener('message', (e) => { if (e.data && e.data.type === 'media') window.__media.push(e.data); });
+  });
+  assert.ok(await scrollToEnd(pg, endBar, 40));
+  const r = await pg.evaluate(() => ({
+    alive: window.__alive === true,
+    url: location.href,
+    frames: window.__frames,
+    media: window.__media,
+    cards: document.querySelectorAll('#cards > article.card').length,
+  }));
+  assert.ok(r.alive, 'still the same document');
+  assert.doesNotMatch(r.url, /busted/);
+  assert.equal(r.cards, site.PER * site.LAST, 'pages still append');
+  assert.ok(r.frames.length >= 1);
+  for (const f of r.frames) {
+    assert.equal(f.sandbox, 'allow-scripts allow-same-origin');
+    assert.equal(f.allow, "autoplay 'none'");
+  }
+  // The setter reports mid-silence (muted before pause), so judge each frame by its last report.
+  const last = {};
+  for (const m of r.media) last[m.page] = m;
+  assert.equal(Object.keys(last).length, site.LAST - 1, 'every iframe page reported: ' + JSON.stringify(r.media));
+  for (const m of Object.values(last)) assert.ok(m.muted && m.paused, 'iframe media muted and paused: ' + JSON.stringify(m));
+  // The only page errors are the sandbox refusing each frame buster.
+  assert.ok(errors.length >= 1, 'frame buster ran and was refused');
+  for (const e of errors) assert.match(e, /does not have permission to navigate the target frame/);
   await ctx.close();
 });
 
