@@ -661,18 +661,34 @@
   // Network
   // ---------------------------------------------------------------------------
 
+  const FETCH_TIMEOUT_MS = 20000;
+
   function fetchBytes(url, signal) {
     const sameOrigin = safeOrigin(url) === win.location.origin;
     if (sameOrigin || typeof GM_xmlhttpRequest !== 'function') {
-      return fetch(url, { credentials: 'include', redirect: 'follow', signal }).then((r) => {
+      // One controller per request: the pager's signal or the timeout aborts it.
+      const ctl = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, FETCH_TIMEOUT_MS);
+      const follow = () => ctl.abort();
+      if (signal) {
+        if (signal.aborted) ctl.abort();
+        else signal.addEventListener('abort', follow, { once: true });
+      }
+      return fetch(url, { credentials: 'include', redirect: 'follow', signal: ctl.signal }).then((r) => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.arrayBuffer().then((buf) => ({ bytes: new Uint8Array(buf), type: r.headers.get('content-type'), finalUrl: r.url || url }));
+      }).catch((e) => {
+        throw timedOut ? new Error('timed out') : e;
+      }).finally(() => {
+        clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', follow);
       });
     }
     return new Promise((resolve, reject) => {
       if (signal && signal.aborted) return reject(new Error('aborted'));
       const req = GM_xmlhttpRequest({
-        method: 'GET', url, responseType: 'arraybuffer', timeout: 20000,
+        method: 'GET', url, responseType: 'arraybuffer', timeout: FETCH_TIMEOUT_MS,
         onload: (r) => {
           if (r.status >= 400) return reject(new Error('HTTP ' + r.status));
           const type = (/content-type:\s*([^\r\n]+)/i.exec(r.responseHeaders || '') || [])[1];

@@ -131,6 +131,10 @@ function route(url) {
       ${n < LAST ? item('Next', u.searchParams.has('ext') ? `https://elsewhere.example/bs?page=${n + 1}` : `/bs?page=${n + 1}`) : item('Next', '#', ' disabled')}</ul></nav>`;
     return { body: page('Bootstrap ' + n, `<main><ul class="posts">${posts(n)}</ul>${nav}</main>`) };
   }
+  if (u.pathname === '/hang') {
+    // Pages after the first never answer.
+    return { body: page('Hang ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/hang?page=', n, 'Next')}`), delay: n > 1 ? 1e9 : 0 };
+  }
   if (u.pathname === '/long') {
     // Ten ordinary pages, for readers who park in the footer.
     return { body: page('Long ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/long?page=', n, 'Next', LONG_LAST)}`) };
@@ -178,7 +182,8 @@ function start() {
       res.writeHead(r.status || 200, { 'content-type': r.type || 'text/html; charset=utf-8' });
       res.end(r.body);
     };
-    if (r.delay) setTimeout(send, r.delay);
+    // unref: a never-answering route (/hang) must not keep the test process alive.
+    if (r.delay) setTimeout(send, r.delay).unref();
     else send();
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));

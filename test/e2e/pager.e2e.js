@@ -24,6 +24,7 @@ test.before(async () => {
 });
 test.after(async () => {
   await browser?.close();
+  server?.closeAllConnections();
   server?.close();
 });
 
@@ -549,6 +550,17 @@ test('Stop becomes Resume, and the menu tells stopped, paused and finished apart
   await pg.evaluate(() => { window.__menu['Load next page now'](); });
   await pg.waitForTimeout(300);
   assert.match(await pg.evaluate(onwardText), /Last page reached/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a page that never answers times out after 20 s and pauses', async () => {
+  const { pg, ctx, errors } = await open('/hang?page=1');
+  const failed = () => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /failed \(timed out\)\. Paused\./.test(w.shadowRoot?.textContent || ''));
+  // The 3 s probe, then the 20 s timeout.
+  assert.ok(await scrollToEnd(pg, failed, 90), 'the stuck load gave up and paused');
+  assert.equal(await pg.getByRole('button', { name: 'Retry', exact: true }).count(), 1, 'with a Retry button');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER);
   assert.deepEqual(errors, []);
   await ctx.close();
 });
