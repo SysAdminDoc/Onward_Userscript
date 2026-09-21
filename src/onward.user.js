@@ -638,6 +638,7 @@
         excludeUrl: typeof r.excludeUrl === 'string' ? r.excludeUrl : '',
       };
       if (typeof rule.url !== 'string' || !rule.url) continue;
+      if (r.excludeUrl != null && typeof r.excludeUrl !== 'string') continue;
       // A broken excludeUrl can't be honoured, so the rule can't be trusted either.
       try { new RegExp(rule.url); new RegExp(rule.excludeUrl); } catch (e) { continue; }
       out.push(rule);
@@ -665,9 +666,28 @@
     return matchingRules(rules, href)[0] || null;
   }
 
-  /** The first rule whose selectors find something on this page. */
-  function fittingRule(rules, doc) {
-    return rules.find((r) => queryAll(doc, r.next).length > 0 && (!r.content || queryAll(doc, r.content).length > 0)) || null;
+  /**
+   * The first rule that works on this page: its next selector leads to a
+   * usable link or button, and its content selector finds items. A rule may
+   * leave either out, and detection fills that part in.
+   */
+  function fittingRule(rules, doc, href) {
+    return rules.find((r) => (!r.next || !!findNext(doc, href, { rule: r })) && (!r.content || queryAll(doc, r.content).length > 0)) || null;
+  }
+
+  /**
+   * Which rule to use here. { rule } normally; { wait } when a site rule
+   * matches the address but not the page yet (probably still rendering);
+   * { lastPage } when a site rule's items are there but its next link isn't,
+   * so the site's last page is not handed to detection the rule overrides.
+   */
+  function chooseRule(userRules, listRules, href, doc, attempt) {
+    const mine = matchingRules(userRules, href);
+    const rule = fittingRule(mine, doc, href);
+    if (rule) return { rule, mine: true };
+    if (mine.some((r) => r.content && queryAll(doc, r.content).length > 0)) return { rule: null, lastPage: true };
+    if (mine.length && attempt < 2) return { rule: null, wait: true };
+    return { rule: fittingRule(matchingRules(listRules, href), doc, href) };
   }
 
   // ---------------------------------------------------------------------------
@@ -1512,17 +1532,20 @@
   async function runPicker(app) {
     app.picking = true;
     try { await pickRule(app); } finally { app.picking = false; }
+    // Saved, refused or cancelled: Onward starts again either way (a start is
+    // refused while picking, so this has to come after the flag drops).
+    app.restart();
   }
 
   async function pickRule(app) {
     // Hold the page still while the user points at things.
     if (app.pager) { app.pager.destroy(); app.pager = null; }
     let nextEl = await pickElement('Click the “Next page” link or “Load more” button.');
-    // Cancel puts Onward back the way it was.
-    if (!nextEl) return app.restart();
+    // Cancel: runPicker puts Onward back the way it was.
+    if (!nextEl) return;
     nextEl = nextEl.closest('a, button, [role="button"], input') || nextEl;
     const itemEl = await pickElement('Now click one result, post or product in the list.');
-    if (!itemEl) return app.restart();
+    if (!itemEl) return;
     // Climb to the level where the item has same-looking siblings.
     let item = itemEl;
     while (item.parentElement && item.parentElement !== document.body) {
@@ -1547,14 +1570,12 @@
     const check = rule.next && findNext(document, location.href, { rule });
     if (!check || check.el !== nextEl) {
       toast('Couldn’t build a rule that finds that link. Write one in Settings instead.', 'err');
-      app.restart();
       return;
     }
     const rules = store.get('rules').filter((r) => r.url !== rule.url);
     rules.unshift(rule);
     store.set('rules', rules);
     toast('Rule saved for ' + location.hostname + '. Restarting.', 'ok');
-    app.restart();
   }
 
   // ---------------------------------------------------------------------------
@@ -1577,31 +1598,32 @@
     const app = {
       pager: null,
       status: 'idle',
+      gen: 0,
       restart(opts) {
         if (this.pager) this.pager.destroy();
         this.pager = null;
+        this.gen++;  // retries scheduled for the old start are void now
         this.tryStart(0, opts);
       },
       tryStart(attempt, opts) {
         opts = opts || {};
+        if (this.picking || this.pager) return;
         const s = loadSettings();
         const host = location.hostname;
         if (s.disabledHosts.includes(host)) { this.status = 'disabled on this site'; return; }
         if (s.exclude.some((x) => host === x || host.endsWith('.' + x))) { this.status = 'excluded host'; return; }
+        const gen = this.gen;
         const retry = () => {
           // Many lists are rendered after load; look again a couple of times.
-          if (attempt < 2) setTimeout(() => this.tryStart(attempt + 1, opts), attempt === 0 ? 1500 : 4000);
+          if (attempt < 2) setTimeout(() => { if (this.gen === gen) this.tryStart(attempt + 1, opts); }, attempt === 0 ? 1500 : 4000);
         };
-        // A rule is only used where its selectors find something; otherwise the
-        // next rule, then auto-detection.
-        const userRules = matchingRules(s.rules, location.href);
-        const userRule = fittingRule(userRules, document);
-        if (!userRule && userRules.length && attempt < 2) {
-          // Probably not rendered yet; the rule gets the retries before detection does.
-          this.status = 'waiting for the page to render';
-          return retry();
-        }
-        const rule = userRule || fittingRule(matchingRules(s.sourceRules, location.href), document);
+        // A rule is only used where it works on this page; otherwise the next
+        // rule, then detection. A site rule still rendering gets the retries first.
+        const choice = chooseRule(s.rules, s.sourceRules, location.href, document, attempt);
+        if (choice.wait) { this.status = 'waiting for the page to render'; return retry(); }
+        if (choice.lastPage) { this.status = 'last page (by your site rule)'; return; }
+        const rule = choice.rule;
+        const userRule = !!choice.mine;
         // A rule the user wrote or picked means they want paging here.
         if (!opts.force && !userRule && selfPagingSite()) {
           this.status = STANDING_BY;
@@ -1678,6 +1700,6 @@
 
   return {
     VERSION, boot, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, itemKey, splitRepeats, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, itemKey, splitRepeats, signature, barTag,
   };
 });

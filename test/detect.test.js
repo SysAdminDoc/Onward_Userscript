@@ -174,20 +174,42 @@ test('rules: excludeUrl skips a rule, and a broken one drops it', () => {
     { url: '^https://ex\\.com/', next: 'a.x', excludeUrl: '([bad' },
   ]);
   assert.equal(rules.length, 2, 'the rule with a broken excludeUrl is dropped');
+  assert.equal(O.normalizeRules([{ url: '^https://ex\\.com/', next: 'a', excludeUrl: ['/search'] }]).length, 0, 'a non-string excludeUrl is refused, not ignored');
   assert.deepEqual(O.matchingRules(rules, 'https://ex.com/list').map((r) => r.next), ['a.n', 'a.m']);
   assert.deepEqual(O.matchingRules(rules, 'https://ex.com/search?q=1').map((r) => r.next), ['a.m']);
 });
 
-test('fittingRule: a rule is used only where its selectors find something', () => {
-  const d = dom('<div class="list"><div class="item">x</div></div><a class="m" href="/list/2">Next</a>');
+test('fittingRule: a rule is used only where it works on the page', () => {
+  const d = dom('<div class="list"><div class="item">x</div></div><a class="m" href="/list/2">Next</a><a class="dead" href="#">Next</a>');
   const rules = [
     { url: 'x', next: 'a.n', content: '.list > .item' },
     { url: 'x', next: 'a.m', content: '.results > .row' },
     { url: 'x', next: '//a[@class="m"]', content: '.list > .item' },
   ];
-  assert.equal(O.fittingRule(rules, d), rules[2], 'next missing, then content missing, then a fit');
-  assert.equal(O.fittingRule(rules.slice(0, 2), d), null, 'nothing fits');
-  assert.equal(O.fittingRule([{ url: 'x', next: 'a.m' }], d).next, 'a.m', 'content is optional');
+  // fittingRule takes the page address so it can tell a usable next link from a dead one.
+  assert.equal(O.fittingRule(rules, d, BASE), rules[2], 'next missing, then content missing, then a fit');
+  assert.equal(O.fittingRule(rules.slice(0, 2), d, BASE), null, 'nothing fits');
+  assert.equal(O.fittingRule([{ url: 'x', next: 'a.m' }], d, BASE).next, 'a.m', 'content is optional');
+  assert.equal(O.fittingRule([{ url: 'x', next: 'a.dead' }], d, BASE), null, 'a next link going nowhere does not fit');
+  assert.ok(O.fittingRule([{ url: 'x', content: '.list > .item' }], d, BASE), 'a content-only rule fits');
+  assert.ok(O.fittingRule([{ url: 'x', mode: 'iframe' }], d, BASE), 'a mode-only rule fits');
+});
+
+test('chooseRule: site rules first, render retries, last page, then list rules', () => {
+  const href = 'https://example.com/list/';
+  const page = dom('<ul class="posts"><li>a</li><li>b</li></ul><a class="next" href="/list/2">Next</a>');
+  const noNext = dom('<ul class="posts"><li>a</li><li>b</li></ul>');
+  const blank = dom('<p>loading…</p>');
+  const fits = { url: '^https://example\\.com/', next: 'a.next', content: 'ul.posts > li' };
+  const other = { url: '^https://example\\.com/', next: 'a.elsewhere', content: '.grid > .card' };
+  const list = { url: '^https://example\\.com/list/', next: 'a.next' };
+  assert.deepEqual(O.chooseRule([fits], [list], href, page, 0), { rule: fits, mine: true }, 'a site rule that works wins');
+  assert.deepEqual(O.chooseRule([other], [list], href, blank, 0), { rule: null, wait: true }, 'not rendered yet: wait');
+  assert.deepEqual(O.chooseRule([other], [list], href, page, 2), { rule: list }, 'after the retries, a list rule');
+  assert.deepEqual(O.chooseRule([other], [], href, page, 2), { rule: null }, 'or detection');
+  assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 2), { rule: null, lastPage: true }, 'the rule\'s items but no next link: last page');
+  const excluded = { ...fits, excludeUrl: '/list/' };
+  assert.deepEqual(O.chooseRule([excluded], [list], href, page, 0), { rule: list }, 'an excluded site rule does not count');
 });
 
 test('item keys: same item, same key; different item or picture, different key', () => {

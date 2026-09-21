@@ -32,11 +32,13 @@ async function open(url, prepare) {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
   const errors = [];
+  const logs = [];
   pg.on('pageerror', (e) => errors.push(e.message));
+  pg.on('console', (m) => logs.push(m.text()));
   await pg.goto(base + url, { waitUntil: 'load' });
   if (prepare) await pg.evaluate(prepare);
   await pg.addScriptTag({ content: SHIM + SCRIPT });
-  return { pg, ctx, errors };
+  return { pg, ctx, errors, logs };
 }
 
 async function scrollToEnd(pg, until, rounds = 30) {
@@ -234,9 +236,7 @@ test('element picker saves a working site rule', async () => {
 });
 
 test('a site that loads more by itself gets no Onward pages', async () => {
-  const { pg, ctx, errors } = await open('/selfscroll?page=1');
-  const logs = [];
-  pg.on('console', (m) => logs.push(m.text()));
+  const { pg, ctx, errors, logs } = await open('/selfscroll?page=1');
   for (let i = 0; i < 16; i++) {
     await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await pg.waitForTimeout(300);
@@ -376,9 +376,7 @@ test('a live item prepended every 1.5 s does not stop paging', async () => {
 });
 
 test('picking Next on a Bootstrap pager saves a rule that pages forward', async () => {
-  const { pg, ctx, errors } = await open('/bs?page=2');
-  const logs = [];
-  pg.on('console', (m) => logs.push(m.text()));
+  const { pg, ctx, errors, logs } = await open('/bs?page=2');
   await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
   const clickOn = async (locator) => {
     await locator.scrollIntoViewIfNeeded();
@@ -408,11 +406,9 @@ test('picking Next on a Bootstrap pager saves a rule that pages forward', async 
 });
 
 test('a saved rule whose selectors miss this page gives way to detection', async () => {
-  const { pg, ctx, errors } = await open('/blog?page=1', () => {
+  const { pg, ctx, errors, logs } = await open('/blog?page=1', () => {
     window.__gm = { rules: [{ name: 'other layout', url: '^https?://127\\.0\\.0\\.1(:\\d+)?/', next: 'a.nowhere', content: '.nothing > li', insert: '', mode: '', click: false, excludeUrl: '' }] };
   });
-  const logs = [];
-  pg.on('console', (m) => logs.push(m.text()));
   // Two retries (1.5 s, then 4 s) belong to the rule before detection steps in.
   assert.ok(await scrollToEnd(pg, endBar, 60), 'detection paged to the end');
   assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
@@ -441,6 +437,24 @@ for (const step of [1, 2]) {
     await ctx.close();
   });
 }
+
+test('pending render retries do not start Onward under an open picker', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => {
+    window.__gm = { rules: [{ name: 'other layout', url: '^https?://127\\.0\\.0\\.1(:\\d+)?/', next: 'a.nowhere', content: '.nothing > li', insert: '', mode: '', click: false, excludeUrl: '' }] };
+  });
+  await pg.waitForTimeout(500);
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  await pg.waitForTimeout(9000); // past both retries (1.5 s and 4 s) and a probe
+  const r = await pg.evaluate(() => ({
+    posts: document.querySelectorAll('ul.posts > li.post').length,
+    search: location.search,
+  }));
+  assert.equal(r.posts, site.PER, 'nothing paged under the picker');
+  assert.equal(r.search, '?page=1');
+  assert.equal(await pg.getByRole('button', { name: 'Cancel', exact: true }).count(), 1, 'the picker is still open');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
 
 test('the picker refuses a rule that would not lead back to the clicked link', async () => {
   // "Next" goes to another site, which Onward never follows, so no rule can work.
