@@ -1318,6 +1318,7 @@
       this.path = describePath(content.container);
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
       this.firstKey = content.items.length ? itemKey(content.items[0], true) : null;
+      this.firstItem = content.items[0] || null;
       this.startItems = content.items.length;
       this.contentHow = content.how;
       this.firstNext = { how: next.how, score: next.score };
@@ -1542,6 +1543,12 @@
       }
       this.inputAt = Date.now();
       this.onScroll();
+    }
+
+    /** The list Onward pages is still there, starting with the item it started with. */
+    sameList() {
+      const first = this.firstItem;
+      return !this.listGone() && !!first && first.isConnected && this.container.contains(first) && itemKey(first, true) === this.firstKey;
     }
 
     /** Nothing to add pages to: the list itself (load-more mode), or our place in it, is gone. */
@@ -2880,15 +2887,33 @@
     let lastUrl = location.href;
     const urlChanged = (delay) => {
       if (location.href === lastUrl) return;
-      // A jump to #comments or #top stays on the same page; a hash route (#/item) doesn't.
-      const hashOnly = samePage(location.href, lastUrl);
+      const prev = lastUrl;
       const ours = location.href === app.expectUrl
         || (app.pager && (location.href === app.pager.selfUrl || app.pager.separators.some((x) => x.url === location.href) || location.href === app.pager.startUrl));
       lastUrl = location.href;
-      if (hashOnly || ours || app.picking) return;
+      if (ours || app.picking) return;
       const p = app.pager;
       const navFrom = p && p.container ? { container: p.container, first: p.firstKey } : null;
-      setTimeout(() => app.restart({ navFrom }), delay);
+      if (stripHash(location.href) !== stripHash(prev)) {
+        setTimeout(() => app.restart({ navFrom }), delay);
+        return;
+      }
+      // Only the hash changed. A jump to #comments stays on the same page. A
+      // #/route starts over only when the list Onward pages went with it: an
+      // overlay (#/quickview/7), or a router noting how far it has loaded
+      // (#/list?page=3), leaves the list as it was. Apps draw the new route
+      // after the address changes, some after fetching it, so look a few times.
+      if (!routeHash(location.href) && !routeHash(prev)) return;
+      const url = location.href;
+      const look = (i) => setTimeout(() => {
+        if (location.href !== url || app.picking) return;
+        if (!app.pager || !app.pager.sameList()) {
+          app.restart({ navFrom });
+          return;
+        }
+        if (i < 2) look(i + 1);
+      }, [delay, 1500, 4000][i]);
+      look(0);
     };
     // The Navigation API says so as soon as a route changes; polling stays for
     // browsers without it (and as a backstop), giving the app longer to render.

@@ -2125,6 +2125,40 @@ test('after a route change reuses the Load more node for Delete, Onward clicks n
   await ctx.close();
 });
 
+test('an overlay the site opens with a #/ hash over the list keeps the added pages', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 15), 'pages 2 and 3');
+  const before = await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length);
+  await pg.evaluate(() => { location.hash = '#/quickview/7'; });
+  await pg.waitForTimeout(2000);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), before);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a hash router that notes how far it has loaded keeps its pace', async () => {
+  const { pg, ctx, errors } = await open('/hashmore#/list?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 20, 60), 'to the end');
+  const gaps = await pg.evaluate(() => window.__clicks.map((t, i, a) => (i ? t - a[i - 1] : 0)));
+  assert.ok(gaps.every((g) => g < 3000), 'a click waited ' + Math.max(...gaps) + ' ms after the last (restarts)');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+for (const slow of [false, true]) {
+  test(`a hash route that refills the same list element with another list starts over on it${slow ? ' (drawn 800 ms later)' : ''}`, async () => {
+  const { pg, ctx, errors } = await open(slow ? '/hashlists?slow=1#/cats' : '/hashlists#/cats');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 10), 'cats page 2');
+  await pg.evaluate(() => { window.scrollTo(0, 0); location.hash = '#/dogs'; });
+  await pg.waitForTimeout(2500);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 10, 40), 'dogs page 2');
+  const words = await pg.evaluate(() => Array.from(document.querySelectorAll('#list > li.post a')).map((a) => a.textContent.split(' ')[0]));
+  assert.deepEqual([...new Set(words)], ['dogs'], words.join(','));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+  });
+}
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

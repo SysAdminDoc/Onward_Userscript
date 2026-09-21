@@ -212,6 +212,37 @@ function route(url, req) {
       }
       addEventListener('hashchange', render); render();</script>`) };
   }
+  if (u.pathname === '/hashmore') {
+    // A hash-routed list that notes how far it has loaded in its route (#/list?page=N), as hash-mode routers do.
+    return { body: page('Hash more', `<ul class="posts" id="list">${posts(1)}</ul><button class="load-more" id="lm">Load more</button>
+      <script>let n = 1; window.__clicks = [];
+      document.getElementById('lm').onclick = () => { n++; window.__clicks.push(Date.now()); setTimeout(() => {
+        for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'Loaded ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); }
+        history.replaceState(null, '', '#/list?page=' + n);
+        if (n >= ${LAST}) document.getElementById('lm').remove(); }, 150); };</script>`) };
+  }
+  if (u.pathname === '/hashlists') {
+    // One list element for every hash route (#/cats, #/dogs): a route change rewrites its rows in place,
+    // as a keyed framework would, leaving anything else in it alone, and draws the route's pager. The next
+    // pages are plain server pages (?r=dogs&page=2), as a no-script fallback would be.
+    const r = u.searchParams.get('r');
+    if (r) {
+      const items = Array.from({ length: PER }, (_, i) => `<li class="post"><a href="/${r}/${(n - 1) * PER + i + 1}">${r} ${(n - 1) * PER + i + 1}</a> with summary text</li>`).join('');
+      return { body: page('Lists ' + r + ' ' + n, `<ul class="posts" id="list">${items}</ul>${pager('/hashlists?r=' + r + '&page=', n, 'Next')}`) };
+    }
+    return { body: page('Lists', `<ul class="posts" id="list"></ul><div id="pg"></div>
+      <script>const own = [];
+      function render() {
+        const r = location.hash.replace(/^#\\/?/, '') || 'cats';
+        for (let i = 1; i <= ${PER}; i++) {
+          if (!own[i]) { own[i] = document.createElement('li'); own[i].className = 'post'; document.getElementById('list').append(own[i]); }
+          own[i].innerHTML = '<a href="/' + r + '/' + i + '">' + r + ' ' + i + '</a> with summary text';
+        }
+        document.getElementById('pg').innerHTML = '<div class="pagination"><span class="current">1</span> <a href="/hashlists?r=' + r + '&page=2">2</a> <a class="next" href="/hashlists?r=' + r + '&page=2">Next</a></div>';
+      }
+      // ?slow: the route is drawn 800 ms after the address changes, as an app that fetches it first.
+      addEventListener('hashchange', () => setTimeout(render, ${u.searchParams.has('slow') ? 800 : 0})); render();</script>`) };
+  }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {
     // Loads more by itself near the bottom, and still advertises rel=next for crawlers.
