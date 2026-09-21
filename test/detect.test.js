@@ -284,10 +284,16 @@ test('data-bg only becomes a background when it is an image address', () => {
   // An empty one used to throw, which failed every page on the site.
   const d = dom(`<li class="card"><div class="thumb" data-bg=""></div><a href="/p/1">Item one</a></li>
     <section data-bg="dark"><p>x</p></section><section data-bg="#f5f5f5"><p>y</p></section><section data-bg="true"><p>z</p></section>
+    <section data-bg="rgb(0 0 0 / 50%)"><p>c</p></section><section data-bg="1.25"><p>n</p></section>
     <div class="a" data-bg="covers/7.webp"></div><div class="b" data-bg="//cdn.example.com/c/8"></div><div class="c" data-background-image="url('/c/9.jpg')"></div>`, base);
   assert.doesNotThrow(() => O.prepareItems([d.querySelector('li')], base));
   O.prepareItems(Array.from(d.querySelectorAll('section, div.a, div.b, div.c')), base);
-  assert.deepEqual(Array.from(d.querySelectorAll('section'), (x) => x.style.backgroundImage), ['', '', ''], 'flags and colours are left alone');
+  assert.deepEqual(Array.from(d.querySelectorAll('section'), (x) => x.style.backgroundImage), ['', '', '', '', ''], 'flags, colours and numbers are left alone');
+  // Addresses without an image extension are still addresses.
+  const plain = dom('<div class="e" data-bg="covers/7"></div><div class="f" data-bg="image.php?id=5"></div><div class="g" data-bg="media/thumb?id=9&amp;w=300"></div>', base);
+  O.prepareItems(Array.from(plain.querySelectorAll('div')), base);
+  assert.deepEqual(Array.from(plain.querySelectorAll('div'), (x) => x.style.backgroundImage),
+    ['url("https://example.com/covers/7")', 'url("https://example.com/image.php?id=5")', 'url("https://example.com/media/thumb?id=9&w=300")']);
   assert.equal(d.querySelector('.a').style.backgroundImage, 'url("https://example.com/covers/7.webp")');
   assert.equal(d.querySelector('.b').style.backgroundImage, 'url("https://cdn.example.com/c/8")');
   assert.equal(d.querySelector('.c').style.backgroundImage, 'url("https://example.com/c/9.jpg")');

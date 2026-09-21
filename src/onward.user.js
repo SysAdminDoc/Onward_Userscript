@@ -700,9 +700,11 @@
   ];
   const PLACEHOLDER_RE = /^data:|blank|placeholder|spacer|lazy|loading|grey|gray|transparent|1x1|pixel|(^|\/)none\.(gif|png)/i;
   const BG_ATTRS = ['data-bg', 'data-background-image'];
-  // What only an image address looks like: a full or root-relative URL, or a
-  // file with an image extension. Sites also use data-bg for flags and colours.
-  const IMAGE_REF_RE = /^(https?:|\/|\.\.?\/|data:image\/)|\.(avif|bmp|gif|jpe?g|png|svg|webp)([?#]|$)/i;
+  // What an image address looks like, as against the flags and colours sites
+  // also keep in data-bg ("dark", "#f5f5f5", "rgba(0,0,0,.5)", "1"): a URL or a
+  // path, anything with a "/" or a "?", or a file name with an extension.
+  const imageRef = (v) => !/^(#|rgba?\(|hsla?\(|var\()/i.test(v) && !/^[\d.\s%]+$/.test(v)
+    && (/^(https?:|\/|\.\.?\/|data:image\/)/i.test(v) || /[/?]/.test(v) || /\.[a-z0-9]{2,5}([?#]|$)/i.test(v));
 
   /** A srcset that only offers placeholders (data: URIs, blank.gif and the like). */
   const placeholderSet = (set) => /^\s*data:/i.test(set) || set.split(',').every((part) => PLACEHOLDER_RE.test(part.trim().split(/\s+/)[0] || ''));
@@ -726,7 +728,7 @@
       if (el.style.backgroundImage && !/^url\(["']?data:/.test(el.style.backgroundImage)) continue;
       const v = (BG_ATTRS.map((a) => el.getAttribute(a)).find((x) => x && x.trim()) || '').trim();
       const inner = /^url\(/i.test(v) ? v.replace(/^url\(\s*["']?|["']?\s*\)$/gi, '') : v;
-      if (!IMAGE_REF_RE.test(inner)) continue;
+      if (!imageRef(inner)) continue;
       const u = base ? absUrl(inner, base) : inner;
       if (u) el.style.backgroundImage = 'url("' + u.replace(/["\\]/g, '\\$&') + '")';
     }
