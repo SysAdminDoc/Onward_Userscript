@@ -836,6 +836,14 @@
   const BG_SEL = BG_ATTRS.map((a) => '[' + a + ']').join(',') + ',[style*="background-image"]';
 
   /** The picture an item shows, wherever its loader keeps it: an image, a lazy background, a <noscript> copy. */
+  const NAMED_REFS = { amp: '&', quot: '"', apos: "'", lt: '<', gt: '>' };
+  /** Undoes the character references an attribute value can carry (&#038;, &#x26;, &amp;). */
+  const decodeRefs = (v) => v.replace(/&(#x[0-9a-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (ref, r) => {
+    if (r[0] !== '#') return NAMED_REFS[r.toLowerCase()];
+    const n = /^#x/i.test(r) ? parseInt(r.slice(2), 16) : parseInt(r.slice(1), 10);
+    return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : ref;
+  });
+
   function pictureOf(el) {
     for (const img of el.matches('img') ? [el] : el.querySelectorAll('img')) {
       const u = imageUrl(img);
@@ -846,16 +854,14 @@
       if (u && !PLACEHOLDER_RE.test(u)) return u;
     }
     // A <noscript> copy: markup in a fetched page, raw text on the live one. The
-    // raw text is read as markup too (in a template, where nothing loads), so
-    // "&#038;" decodes the same on both and page 1 keys like a copy of it.
+    // raw text's src has its character references undone ("&#038;" is "&"), as
+    // the fetched copy's attribute has, without parsing any markup (which a
+    // page that enforces Trusted Types would refuse).
     for (const ns of el.querySelectorAll('noscript')) {
-      let img = ns.querySelector('img[src]');
-      if (!img && ns.textContent) {
-        const t = el.ownerDocument.createElement('template');
-        t.innerHTML = ns.textContent;
-        img = t.content.querySelector('img[src]');
-      }
+      const img = ns.querySelector('img[src]');
       if (img) return img.getAttribute('src');
+      const m = /<img\b[^>]*?\ssrc\s*=\s*["']?([^"'\s>]+)/i.exec(ns.textContent || '');
+      if (m) return decodeRefs(m[1]);
     }
     return '';
   }

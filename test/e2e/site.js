@@ -159,6 +159,15 @@ function route(url, req) {
         for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'Loaded ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); }
         if (n >= ${LAST}) document.getElementById('lm').remove(); }, 150); };</script>`) };
   }
+  if (u.pathname === '/ttlist') {
+    // A blog on a page that enforces Trusted Types; each post has a <noscript> fallback picture.
+    const items = Array.from({ length: PER }, (_, i) => {
+      const k = (n - 1) * PER + i + 1;
+      return `<li class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><noscript><img src="/img/${k}.png?w=300&#038;h=200"></noscript></li>`;
+    }).join('');
+    return { body: page('TT ' + n, `<main><ul class="posts">${items}</ul>${pager('/ttlist?page=', n, 'Next »')}</main>`,
+      `<meta http-equiv="Content-Security-Policy" content="require-trusted-types-for 'script'">`) };
+  }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {
     // Loads more by itself near the bottom, and still advertises rel=next for crawlers.

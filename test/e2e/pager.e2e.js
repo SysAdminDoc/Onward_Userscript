@@ -66,7 +66,11 @@ const BRIDGE = `(() => {
  * Playwright's console and pageerror events report both worlds.
  */
 async function inject(pg, shim = SHIM) {
-  if (WORLD === 'main') return pg.addScriptTag({ content: shim + SCRIPT });
+  if (WORLD === 'main') {
+    // A page that enforces Trusted Types refuses an inline script tag. A
+    // manager's own injection isn't stopped by that, so evaluate it there.
+    try { return await pg.addScriptTag({ content: shim + SCRIPT }); } catch (e) { return pg.evaluate(shim + SCRIPT); }
+  }
   // The page world's settings travel as an attribute.
   await pg.evaluate(() => document.documentElement.setAttribute('data-onward-test-gm', JSON.stringify(window.__gm || {})));
   await pg.evaluate(BRIDGE);
@@ -2066,6 +2070,15 @@ test('Skip to footer jumps past the list and holds loading off', async () => {
   await pg.waitForTimeout(2000); // past the 4 s hold
   await pg.keyboard.press('End');
   await pg.waitForFunction((n) => document.querySelectorAll('#list > li.post').length > n, held, { timeout: 8000 });
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a page that enforces Trusted Types, with <noscript> pictures in its posts, still pages', async () => {
+  const { pg, ctx, errors, logs } = await open('/ttlist?page=1');
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.ok(logs.some((l) => /\[Onward\] active:/.test(l)));
   assert.deepEqual(errors, []);
   await ctx.close();
 });
