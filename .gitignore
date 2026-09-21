@@ -1,0 +1,7 @@
+node_modules/
+*.log
+*.tmp.js
+test-results/
+CLAUDE.md
+CODEX_CHANGELOG.md
+.claude/
