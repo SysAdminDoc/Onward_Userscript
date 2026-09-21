@@ -863,6 +863,61 @@ test('a parked reader gets one page even while images above keep growing', async
   await ctx.close();
 });
 
+test('a parked reader gets one page while the page shifts, and one more per key or click', async () => {
+  // Late images above the reader and a widget below grow in the same frames,
+  // and the widget grows on every scroll, so only real input shows the reader.
+  const { pg, ctx, errors } = await open('/latefoot?page=1');
+  const count = () => document.querySelectorAll('#list > article.post').length;
+  const r = await parkedReader(pg, '/latefoot', count);
+  assert.equal(r.first, 2 * site.PER, 'one page after reaching the footer');
+  assert.equal(r.later, 2 * site.PER, 'the page shifting is not the reader');
+  // End typed into a text box is not the reader either.
+  await pg.evaluate(() => document.getElementById('q').focus({ preventScroll: true }));
+  await pg.keyboard.press('End');
+  await pg.waitForTimeout(2000);
+  assert.equal(await pg.evaluate(count), 2 * site.PER, 'a key in a text box');
+  await pg.evaluate(() => document.activeElement.blur());
+  await pg.keyboard.press('End');
+  await pg.waitForTimeout(2500);
+  assert.equal(await pg.evaluate(count), 3 * site.PER, 'the End key brings the next page');
+  await pg.waitForTimeout(3000);
+  assert.equal(await pg.evaluate(count), 3 * site.PER, 'and only one: input before a page lands does not count for the next');
+  await pg.mouse.click(600, 500, { button: 'middle' });
+  await pg.waitForTimeout(2500);
+  assert.equal(await pg.evaluate(count), 4 * site.PER, 'a middle click (autoscroll) brings the next');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a reader parked just below the list gets one page, and the wheel brings the next', async () => {
+  const { pg, ctx, errors } = await open('/lateimg?page=1');
+  const count = () => document.querySelectorAll('#list > article.post').length;
+  // In the footer, 300 px below the end of the list, not at the very bottom.
+  await pg.evaluate(() => window.scrollTo(0, document.getElementById('list').getBoundingClientRect().bottom + scrollY + 300));
+  await pg.waitForTimeout(4500);
+  assert.equal(await pg.evaluate(count), 2 * site.PER, 'one page');
+  await pg.waitForTimeout(3000);
+  assert.equal(await pg.evaluate(count), 2 * site.PER, 'late images in the new page do not pull in more');
+  await pg.mouse.move(600, 400);
+  await pg.mouse.wheel(0, 400);
+  await pg.waitForTimeout(2500);
+  // The wheel leaves the reader inside the list, where pages fill to the threshold as usual.
+  assert.ok(await pg.evaluate(count) >= 3 * site.PER, 'the wheel brings the next page');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a reader who reaches the very bottom as a batch lands gets the next one', async () => {
+  const { pg, ctx, errors } = await open('/more');
+  // The reader lands on the very bottom the moment items arrive, before Onward's click has settled.
+  await pg.evaluate(() => new MutationObserver(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    .observe(document.getElementById('list'), { childList: true }));
+  assert.ok(await scrollToEnd(pg, endBar, 40), 'every batch');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), site.PER * site.LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a parked reader with a short footer still gets one page per scroll', async () => {
   const { pg, ctx, errors } = await open('/shortfoot?page=1');
   const r = await parkedReader(pg, '/shortfoot', () => document.querySelectorAll('#list > li.post').length);

@@ -998,6 +998,9 @@
   const PROBE_MS = 3000;
   const NATIVE_GROWTH = 3;
   const STANDING_BY = 'This site loads more by itself';
+  // The reader moving, as opposed to the page shifting under them.
+  const INPUT_EVENTS = ['wheel', 'touchmove', 'keydown', 'pointerdown'];
+  const SCROLL_KEYS = new Set(['PageDown', 'PageUp', 'End', 'Home', 'ArrowDown', 'ArrowUp', ' ', 'Spacebar']);
 
   class Pager {
     constructor(settings, rule, opts) {
@@ -1019,6 +1022,8 @@
       this.startUrl = location.href;
       this.mode = (rule && rule.mode) || settings.mode;
       this.onScroll = this.onScroll.bind(this);
+      this.onInput = this.onInput.bind(this);
+      this.inputAt = 0;
     }
 
     /** Detect next link + content on the live page. Returns false when there's nothing to do. */
@@ -1051,6 +1056,7 @@
       if (this.scroller) this.scroller.addEventListener('scroll', this.onScroll, { passive: true });
       win.addEventListener('scroll', this.onScroll, { passive: true });
       win.addEventListener('resize', this.onScroll, { passive: true });
+      for (const t of INPUT_EVENTS) win.addEventListener(t, this.onInput, { passive: true, capture: true });
       this.onScroll();
     }
 
@@ -1197,7 +1203,26 @@
 
     /** After a page lands below a reader in the footer, the next waits for them to scroll. */
     waitForReader() {
-      this.awaitScroll = { pos: this.scrollPos(), height: this.metrics().height };
+      const m = this.metrics();
+      // An insert above always leaves page below the reader, so one at the very
+      // bottom already scrolled there after the page landed (while a load-more
+      // click was still settling, say): that is the reader moving.
+      if (m.remaining < 2) return;
+      this.awaitScroll = { pos: this.scrollPos(), height: m.height, since: Date.now() };
+    }
+
+    /** The reader's own input: the wheel, touch, scroll keys, the scrollbar, middle-click autoscroll. */
+    onInput(e) {
+      if (e.type === 'keydown') {
+        const t = e.composedPath()[0];
+        if (!SCROLL_KEYS.has(e.key) || (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))) return;
+      } else if (e.type === 'pointerdown') {
+        const sc = this.scroller;
+        const onBar = e.clientX >= document.documentElement.clientWidth || (sc && e.target === sc && e.offsetX >= sc.clientWidth);
+        if (!onBar && e.button !== 1) return;
+      }
+      this.inputAt = Date.now();
+      this.onScroll();
     }
 
     /** Frameworks sometimes redraw the list and throw away what we added. */
@@ -1229,6 +1254,7 @@
       if (this.scroller) this.scroller.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('resize', this.onScroll);
+      for (const t of INPUT_EVENTS) win.removeEventListener(t, this.onInput, true);
       if (this.anchorHolds) this.restoreAnchoring();
       if (this.nativeObserver) this.nativeObserver.disconnect();
       for (const s of this.separators) s.outer.remove();
@@ -1253,18 +1279,17 @@
         if (m.remaining < m.view * 0.25) this.openWatch();
         if (this.stopped || this.paused) return;
         if (this.awaitScroll) {
-          // A page landed while the reader sat below the list: wait until they
-          // scroll. A shift that only matches content growing above them (late
-          // images, the browser keeping its place) is not the reader. Being at
-          // the very bottom is: an insert above always leaves page below them.
+          // A page landed while the reader sat below the list: the next one
+          // waits for them. Their input since then counts, and so does a scroll
+          // while the page kept its height (a scrollbar drag the browser sends no
+          // events for). A scroll that comes with growth is the browser keeping
+          // its place as images and widgets load, however the numbers add up.
           const w = this.awaitScroll;
-          const moved = this.scrollPos() - w.pos;
-          const grew = m.height - w.height;
-          if (m.remaining >= 2 && (Math.abs(moved) < 1 || Math.abs(moved - grew) <= 2)) {
-            w.pos = this.scrollPos();
-            w.height = m.height;
-            return;
-          }
+          const pos = this.scrollPos();
+          const steadyScroll = Math.abs(pos - w.pos) >= 1 && Math.abs(m.height - w.height) < 1;
+          w.pos = pos;
+          w.height = m.height;
+          if (!steadyScroll && this.inputAt <= w.since) return;
           this.awaitScroll = null;
         }
         // Tall footers shouldn't delay loading: the end of the list counts too.

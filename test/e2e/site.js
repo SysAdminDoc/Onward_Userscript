@@ -18,6 +18,13 @@ const posts = (n, per = PER) => Array.from({ length: per }, (_, i) => {
   return `<li class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img data-src="/img/${k}.png" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></li>`;
 }).join('');
 
+// Articles whose images reserve no height and arrive 700 ms late, so the
+// list keeps growing above a reader after each page lands.
+const lateArts = (n) => Array.from({ length: PER }, (_, i) => {
+  const k = (n - 1) * PER + i + 1;
+  return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}"></article>`;
+}).join('');
+
 const pager = (base, n, nextLabel, last = LAST) => `<div class="pagination">${Array.from({ length: last }, (_, i) => i + 1)
   .map((k) => (k === n ? `<span class="current">${k}</span>` : `<a href="${base}${k}">${k}</a>`)).join(' ')}
   ${n < last ? `<a class="next" href="${base}${n + 1}">${nextLabel}</a>` : ''}</div>`;
@@ -148,13 +155,17 @@ function route(url) {
     return { body: page('Hang ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/hang?page=', n, 'Next')}`), delay: n > 1 ? 1e9 : 0 };
   }
   if (u.pathname === '/lateimg') {
-    // Articles whose images reserve no height and arrive 700 ms late, so the
-    // list keeps growing above a reader after each page lands.
-    const arts = Array.from({ length: PER }, (_, i) => {
-      const k = (n - 1) * PER + i + 1;
-      return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}"></article>`;
-    }).join('');
-    return { body: page('Late ' + n, `<div class="posts" id="list">${arts}</div>${pager('/lateimg?page=', n, 'Next', LONG_LAST)}`) };
+    return { body: page('Late ' + n, `<div class="posts" id="list">${lateArts(n)}</div>${pager('/lateimg?page=', n, 'Next', LONG_LAST)}`) };
+  }
+  if (u.pathname === '/latefoot') {
+    // /lateimg plus a widget after the footer that grows 300 px once, 450 ms
+    // after the first added page, and 2 px on every scroll; and a search box.
+    const extra = `<div id="widget" style="height:10px;background:#fcc"></div><input id="q" style="position:fixed;top:0;right:0">
+      <script>let grown = false; const L = document.getElementById('list'); const W = document.getElementById('widget');
+      const grow = (px) => { W.style.height = (parseInt(W.style.height, 10) + px) + 'px'; };
+      new MutationObserver(() => { if (grown || L.querySelectorAll('article.post').length <= ${PER}) return; grown = true; setTimeout(() => grow(300), 450); }).observe(L, { childList: true });
+      addEventListener('scroll', () => grow(2), { passive: true });</script>`;
+    return { body: page('Latefoot ' + n, `<div class="posts" id="list">${lateArts(n)}</div>${pager('/latefoot?page=', n, 'Next', LONG_LAST)}`).replace('</body>', extra + '</body>') };
   }
   if (u.pathname === '/slow.svg') {
     return { body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="160"></svg>', type: 'image/svg+xml', delay: 700 };
