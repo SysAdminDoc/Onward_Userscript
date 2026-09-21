@@ -449,11 +449,19 @@ test('a rule\'s next link is taken unless it really is Previous', () => {
 });
 
 test('the default pages to stay off, and the host list', () => {
-  const skip = (path) => O.pathSkipped("/(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/._-]|$)", path);
-  for (const path of ['/checkout', '/checkout/step-2', '/cart', '/Cart/', '/basket.php', '/login', '/log-in', '/users/sign_in', '/signin', '/SignUp',
-    '/register', '/account', '/account/orders', '/account-settings', '/password/reset']) assert.ok(skip(path), path);
-  for (const path of ['/', '/blog/page/2/', '/cartoons/page/3', '/accounts/list', '/forum/tips-for-login', '/registered-users?page=2', '/passwords-101'])
+  // The pattern Onward ships with, not a copy of it.
+  const skip = (path) => O.pathSkipped(O.DEFAULTS.skipPaths, path);
+  for (const path of ['/checkout', '/checkout/step-2', '/cart', '/Cart/', '/basket.php', '/login', '/log-in', '/login.php', '/users/sign_in', '/signin', '/SignUp',
+    '/register', '/account', '/account/orders', '/account/settings', '/my-account/', '/password/reset']) assert.ok(skip(path), path);
+  // Whole segments only: a listing about the word isn't that page.
+  for (const path of ['/', '/blog/page/2/', '/cartoons/page/3', '/accounts/list', '/forum/tips-for-login', '/registered-users?page=2', '/passwords-101',
+    '/questions/tagged/login-page', '/topics/password-manager', '/tag/account-security/page/2/', '/category/cart-accessories/page/3', '/r/signup_bonuses/'])
     assert.ok(!skip(path), path);
+  // A single-page app's #/route counts as its path; an anchor doesn't.
+  for (const href of ['https://shop.example/#/checkout', 'https://shop.example/app#!/account/orders?x=1', 'https://shop.example/checkout?step=2#top'])
+    assert.ok(O.pageSkipped(O.DEFAULTS.skipPaths, href), href);
+  for (const href of ['https://shop.example/blog#checkout', 'https://shop.example/blog?page=2', 'https://shop.example/#/catalog/page/2'])
+    assert.ok(!O.pageSkipped(O.DEFAULTS.skipPaths, href), href);
   assert.equal(O.pathSkipped('', '/checkout'), false, 'an empty pattern skips nothing');
   assert.equal(O.pathSkipped('([bad', '/checkout'), false, 'a broken pattern skips nothing');
   assert.ok(O.hostListed(['example.com'], 'www.example.com'));

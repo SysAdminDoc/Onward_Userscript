@@ -84,7 +84,7 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 | Loading mode | auto | `auto` fetches first and falls back to an iframe when needed. |
 | Run on | every site | "only sites I list" keeps Onward off everywhere except the sites below. |
 | Sites to run on | empty | One host per line, used with "only sites I list". Subdomains are covered. |
-| Stay off pages whose path matches | checkout, cart, sign-in, sign-up, account and password pages | A regular expression tested against the page's path, case-insensitive. Adding pages to a checkout or sign-in flow can break it. "Run Onward here anyway" still works on these pages. |
+| Stay off pages whose path matches | checkout, cart, sign-in, sign-up, account and password pages | A regular expression tested against the page's path (and a single-page app's `#/route`), case-insensitive. The default matches whole path segments, so a listing such as `/tag/account-security/` still pages. Adding pages to a checkout or sign-in flow can break it. "Run Onward here anyway" still works on these pages. |
 | Never run on these hosts | Gmail, Docs, YouTube, X, Facebook and a few more | One host per line. Subdomains are covered. |
 
 At the bottom of the panel, Diagnostics shows what Onward found on the page you're on: how it found the next link and where that leads, the list and how many items it started with, the loading mode, the rule it used and where that rule came from, and the last error. "Copy diagnostics" puts all of it on the clipboard for a bug report. Nothing is sent anywhere.

@@ -46,7 +46,8 @@
     runOn: 'all',          // all | listed (only the hosts in allowHosts)
     allowHosts: [],
     // Pages Onward stays off: appending pages broke checkout and account flows for other auto-pagers.
-    skipPaths: '/(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/._-]|$)',
+    // Whole path segments ("/login.php" and "/my-account/" too), so a listing about the word ("/tag/account-security") isn't one.
+    skipPaths: '/(my[-_]?)?(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/.]|$)',
     disabledHosts: [],
     exclude: [
       'mail.google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
@@ -84,6 +85,14 @@
   function pathSkipped(pattern, path) {
     if (!pattern) return false;
     try { return new RegExp(pattern, 'i').test(path); } catch (e) { return false; }
+  }
+
+  /** The page at href is one Onward stays off: its path, or a single-page app's #/route, matches the pattern. */
+  function pageSkipped(pattern, href) {
+    let x;
+    try { x = new URL(href); } catch (e) { return false; }
+    if (pathSkipped(pattern, x.pathname)) return true;
+    return /^#!?\//.test(x.hash) && pathSkipped(pattern, x.hash.replace(/^#!?/, '').split('?')[0]);
   }
 
   // Rule lists can be hundreds of kilobytes, so they're read once, where they're used.
@@ -2563,7 +2572,7 @@
         if (hostListed(s.exclude, host)) { this.status = 'excluded host'; return; }
         // "Run Onward here anyway" gets past these two.
         if (!opts.force && s.runOn === 'listed' && !hostListed(s.allowHosts, host)) { this.status = 'not on your list of sites'; return; }
-        if (!opts.force && pathSkipped(s.skipPaths, location.pathname)) { this.status = 'a checkout, sign-in or account page'; return; }
+        if (!opts.force && pageSkipped(s.skipPaths, location.href)) { this.status = 'a checkout, sign-in or account page'; return; }
         const gen = this.gen;
         const retry = () => {
           // Many lists are rendered after load; look again a couple of times.
@@ -2705,7 +2714,7 @@
   }
 
   return {
-    VERSION, boot, hostListed, pathSkipped, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
+    VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
     itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });

@@ -1638,6 +1638,21 @@ test('a hash route to another list restarts Onward there', async () => {
   await ctx.close();
 });
 
+test('a single-page app\'s #/checkout route is left alone too', async () => {
+  const { pg, ctx, errors } = await open('/hashapp#/checkout');
+  for (let i = 0; i < 12; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), 5, 'nothing loaded on the checkout route');
+  // Leaving the checkout for a list: that list pages.
+  await pg.evaluate(() => { window.scrollTo(0, 0); location.hash = '#/dogs'; });
+  await pg.waitForTimeout(2500);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 20, 40), 'the dogs list pages');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('after a hash route to a detail view, Onward clicks nothing there', async () => {
   const { pg, ctx, errors } = await open('/hashapp2#/list');
   await pg.waitForTimeout(1500);
