@@ -9,7 +9,8 @@
     "e2e": "node --test --test-concurrency=1 --test-timeout=60000 test/e2e/*.e2e.js",
     "check": "node --check src/onward.user.js && node scripts/check-version.js",
     "screenshots": "node scripts/screenshots.js",
-    "smoke": "node scripts/live-smoke.js"
+    "smoke": "node scripts/live-smoke.js",
+    "bench": "node scripts/bench-rules.js"
   },
   "devDependencies": {
     "jsdom": "^26.1.0",

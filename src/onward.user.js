@@ -55,11 +55,11 @@
     ],
     rules: [],             // user rules (Onward format)
     sources: [],           // URLs of rule lists (Onward or AutoPagerize/wedata JSON)
-    sourceRules: [],       // cached rules from sources, flattened for matching
-    sourceCache: {},       // last good copy of each source: { url: { rules, at } }
+    sourceRules: [],       // rules 0.1.0 cached flattened; used until every list has a packed copy
+    sourceCache: {},       // each rule list's last good copy: { url: { at, count, hosts, generic, rules } }
     sourcesUpdated: 0,     // last time every source updated cleanly
     sourcesTried: 0,       // last refresh attempt, to back off after failures
-    sourcesLock: 0,        // a tab refreshing right now (expires after a minute)
+    sourcesLock: 0,        // { at, id } of the tab refreshing right now (expires after a minute)
   };
 
   const store = {
@@ -86,9 +86,12 @@
     try { return new RegExp(pattern, 'i').test(path); } catch (e) { return false; }
   }
 
+  // Rule lists can be hundreds of kilobytes, so they're read once, where they're used.
+  const HEAVY_KEYS = new Set(['sourceRules', 'sourceCache']);
+
   function loadSettings() {
     const s = {};
-    for (const key of Object.keys(DEFAULTS)) s[key] = store.get(key);
+    for (const key of Object.keys(DEFAULTS)) if (!HEAVY_KEYS.has(key)) s[key] = store.get(key);
     return s;
   }
 
@@ -904,14 +907,16 @@
     return out;
   }
 
+  /** A catch-all from a big list ("^https?://."): it shouldn't beat detection, so it's never used. */
+  const catchAll = (r) => r.url.replace(/[\^$]/g, '').length < 12 && /^\^?https?/.test(r.url) && !/[a-z0-9]\.[a-z]/i.test(r.url);
+
   /** Rules whose url pattern matches this address, in order. */
   function matchingRules(rules, href) {
     const out = [];
     for (const r of rules) {
       if (r.disabled) continue;
       try {
-        // Catch-all rules from big lists (e.g. "^https?://.") shouldn't beat detection.
-        if (r.url.replace(/[\^$]/g, '').length < 12 && /^\^?https?/.test(r.url) && !/[a-z0-9]\.[a-z]/i.test(r.url)) continue;
+        if (catchAll(r)) continue;
         if (!new RegExp(r.url).test(href)) continue;
         if (r.excludeUrl && new RegExp(r.excludeUrl).test(href)) continue;
         out.push(r);
@@ -1908,13 +1913,206 @@
         h('div', { class: 'hint' }, '[{"url": "^https://example\\\\.com/list", "next": "a.next", "content": "#results > .item"}]. CSS or XPath. Optional: "insert", "mode", "click".')),
       h('div', { class: 'blk' }, 'Never run on these hosts', excl),
       h('div', { class: 'blk' }, 'Rule list URLs (optional)', srcs,
-        h('div', { class: 'hint' }, `Onward or AutoPagerize/wedata JSON. ${s.sourceRules.length} cached rules.`),
+        h('div', { class: 'hint' }, `Onward or AutoPagerize/wedata JSON. ${Object.values(store.get('sourceCache') || {}).reduce((n, e) => n + listCount(e), 0) || (store.get('sourceRules') || []).length} cached rules.`),
         h('div', { class: 'row', style: 'justify-content:flex-start' }, h('button', { onclick: () => updateSources(srcs.value.split(/\s+/).filter(Boolean), true) }, 'Update rule lists now'))),
       err,
       h('div', { class: 'row' }, h('button', { onclick: close }, 'Cancel'), h('button', { class: 'pri', onclick: save }, 'Save')));
     const bg = h('div', { class: 'bg', onclick: (e) => { if (e.target === bg) close(); } }, panel);
     sr.appendChild(bg);
     document.documentElement.appendChild(host);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rule lists: stored packed, and indexed by host
+  // ---------------------------------------------------------------------------
+
+  /** JSON, gzipped and in base64 where the browser allows it; 'j:' and plain JSON where it doesn't. */
+  async function packJSON(value) {
+    const json = JSON.stringify(value);
+    try {
+      const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip'));
+      const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+      let bin = '';
+      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+      return btoa(bin);
+    } catch (e) {
+      return 'j:' + json;
+    }
+  }
+
+  async function unpackJSON(packed) {
+    if (packed.startsWith('j:')) return JSON.parse(packed.slice(2));
+    const bin = atob(packed);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    return JSON.parse(await new Response(stream).text());
+  }
+
+  /** Skips a [...] class or (...) group starting at i; returns the index of its closing bracket. */
+  function skipGroup(src, i) {
+    const open = src[i];
+    const close = open === '[' ? ']' : ')';
+    let depth = 0;
+    for (let j = i; j < src.length; j++) {
+      const c = src[j];
+      if (c === '\\') { j++; continue; }
+      if (open === '(' && c === '[') { j = skipGroup(src, j); continue; }
+      if (c === open) depth++;
+      else if (c === close && --depth === 0) return j;
+    }
+    return src.length;
+  }
+  const QUANT_RE = /^(\?|\*|\+|\{\d*,?\d*\})\??/;
+
+  /** The hosts a rule's pattern can only mean, with small groups expanded; null when its host part isn't plain. */
+  function literalHosts(pattern) {
+    let s = pattern.replace(/\\\//g, '/').replace(/^\^/, '');
+    const m = /^https?(\?|\[s\]\?)?:\/\//i.exec(s);
+    if (!m) return null;
+    s = s.slice(m[0].length);
+    let hosts = [''];
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (c === '/' || c === ':' || c === '$') break;
+      if (/[a-z0-9-]/i.test(c)) { hosts = hosts.map((h) => h + c.toLowerCase()); continue; }
+      if (c === '.' || (c === '\\' && s[i + 1] === '.')) {
+        if (c === '\\') i++;
+        hosts = hosts.map((h) => h + '.');
+        continue;
+      }
+      if (c === '(') {
+        const end = skipGroup(s, i);
+        const body = s.slice(i + 1, end).replace(/^\?:/, '');
+        if (/^(\/|\$)/.test(body)) break; // (?:/|$) starts the path
+        const alts = body.split('|');
+        if (alts.some((a) => !/^([a-z0-9-]|\\\.|\.)*$/i.test(a))) return null;
+        const opts = alts.map((a) => a.replace(/\\\./g, '.').toLowerCase());
+        let j = end + 1;
+        if (s[j] === '?') { opts.push(''); j++; }
+        else if (QUANT_RE.test(s.slice(j))) return null;
+        hosts = [].concat(...hosts.map((h) => opts.map((o) => h + o)));
+        if (hosts.length > 16) return null;
+        i = j - 1;
+        continue;
+      }
+      return null;
+    }
+    hosts = hosts.filter((h) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h));
+    return hosts.length ? hosts : null;
+  }
+
+  /** The longest run of plain characters every match must contain, or '' when there's no such run of 4 or more. */
+  function requiredLiteral(src) {
+    let best = '';
+    let run = '';
+    const flush = () => { if (run.length > best.length) best = run; run = ''; };
+    for (let i = 0; i < src.length; i++) {
+      const c = src[i];
+      if (c === '|') return ''; // alternatives: no one run is required
+      if (c === '\\') {
+        const n = src[++i];
+        if (n && !/[a-zA-Z0-9]/.test(n) && !QUANT_RE.test(src.slice(i + 1))) run += n; // an escaped symbol is itself
+        else flush(); // \d, \w, \b, or an optional one
+        continue;
+      }
+      if (c === '[' || c === '(') {
+        flush();
+        i = skipGroup(src, i);
+        const q = QUANT_RE.exec(src.slice(i + 1));
+        if (q) i += q[0].length;
+        continue;
+      }
+      if (c === '?' || c === '*' || c === '{') { // the character before may be missing
+        run = run.slice(0, -1);
+        flush();
+        const q = QUANT_RE.exec(src.slice(i));
+        if (q) i += q[0].length - 1;
+        continue;
+      }
+      if (c === '.' || c === '^' || c === '$' || c === '+' || QUANT_RE.test(src.slice(i + 1))) { flush(); continue; }
+      run += c;
+    }
+    flush();
+    return best.length >= 4 ? best : '';
+  }
+
+  // What a list rule needs to work; names cost a quarter of the space and aren't used.
+  const slimRule = (r) => {
+    const o = { url: r.url };
+    for (const k of ['next', 'content', 'insert', 'mode', 'excludeUrl']) if (r[k]) o[k] = r[k];
+    return o;
+  };
+  const listCount = (e) => (e ? (e.count != null ? e.count : (e.rules || []).length) : 0);
+
+  /**
+   * A rule list as stored. Its rules are packed once (catch-alls, which are
+   * never used, left out). Beside them, plain text a page can search without
+   * unpacking anything: a line per host ("\nexample.com 0,1a", rule numbers
+   * in base 36), and the other rules' patterns with the text every match of
+   * each needs. The rules are unpacked only on a page one of them matches.
+   */
+  async function buildListEntry(rules, at) {
+    const kept = rules.filter((r) => !catchAll(r));
+    const byHost = {};
+    const generic = [];
+    kept.forEach((r, i) => {
+      const hs = literalHosts(r.url);
+      if (hs) for (const h of hs) (byHost[h] = byHost[h] || []).push(i.toString(36));
+      else generic.push([i, requiredLiteral(r.url), r.url]);
+    });
+    let hosts = '\n';
+    for (const h of Object.keys(byHost)) hosts += h + ' ' + byHost[h].join(',') + '\n';
+    return { at, count: rules.length, hosts, generic, rules: await packJSON(kept.map(slimRule)) };
+  }
+
+  const testUrl = (pattern, href) => {
+    try { return new RegExp(pattern).test(href); } catch (e) { return false; }
+  };
+
+  const unpacked = new Map(); // a packed value -> its promise, once per page
+  const unpackOnce = (p) => {
+    if (!unpacked.has(p)) unpacked.set(p, unpackJSON(p));
+    return unpacked.get(p);
+  };
+
+  /** The list rules that could apply at href, most specific first, each with its list's address as .source. */
+  async function listRulesFor(cache, href) {
+    let host;
+    try { host = new URL(href).hostname; } catch (e) { return []; }
+    const bucket = [];
+    const general = [];
+    for (const [source, entry] of Object.entries(cache || {})) {
+      if (!entry) continue;
+      if (Array.isArray(entry.rules)) { // kept unpacked by an earlier build
+        for (const r of entry.rules) general.push(Object.assign({}, r, { source }));
+        continue;
+      }
+      if (typeof entry.hosts !== 'string' || typeof entry.rules !== 'string') continue;
+      const at = entry.hosts.indexOf('\n' + host + ' ');
+      const mine = at < 0 ? [] : entry.hosts.slice(at + host.length + 2, entry.hosts.indexOf('\n', at + 1)).split(',').map((n) => parseInt(n, 36));
+      const maybe = (entry.generic || []).filter(([, lit, url]) => (!lit || href.includes(lit)) && testUrl(url, href)).map(([i]) => i);
+      if (!mine.length && !maybe.length) continue;
+      const rules = await unpackOnce(entry.rules);
+      const expand = (i) => Object.assign({ name: '', insert: '', mode: '', click: false, excludeUrl: '' }, rules[i], { source });
+      for (const i of mine) bucket.push(expand(i));
+      for (const i of maybe) general.push(expand(i));
+    }
+    const longestFirst = (a, b) => b.url.length - a.url.length;
+    return bucket.sort(longestFirst).concat(general.sort(longestFirst));
+  }
+
+  let listStore = null; // the stored lists, read once per page
+  /** List rules for href: packed lists by their index, and the rules 0.1.0 kept flattened until they're replaced. */
+  function loadListRules(href) {
+    if (!listStore) listStore = { cache: store.get('sourceCache') || {}, legacy: store.get('sourceRules') || [] };
+    const { cache, legacy } = listStore;
+    const lists = listRulesFor(cache, href);
+    return legacy.length ? lists.then((r) => r.concat(legacy)) : lists;
+  }
+  function forgetListRules() {
+    listStore = null;
+    unpacked.clear();
   }
 
   /**
@@ -1927,48 +2125,59 @@
     try { parsed = JSON.parse(text); } catch (e) { return { entry: prev, error: 'not a rule list (not JSON)' }; }
     const rules = normalizeRules(parsed, { fromList: true });
     if (!rules.length) return { entry: prev, error: 'no rules in it' };
-    if (prev && prev.rules.length && rules.length < prev.rules.length / 2) {
-      return { entry: prev, error: `only ${rules.length} rules, down from ${prev.rules.length}` };
-    }
+    const before = listCount(prev);
+    if (before && rules.length < before / 2) return { entry: prev, error: `only ${rules.length} rules, down from ${before}` };
     return { entry: { rules, at: now } };
   }
 
   async function updateSources(urls, loud) {
-    // One tab at a time; the lock expires in case its tab closes mid-update.
-    const now = Date.now();
-    if (now - store.get('sourcesLock') < 60000) {
+    // One tab at a time. The lock names its tab, is renewed before each list so
+    // a slow refresh keeps it, expires in case its tab closes, and only ever
+    // gets cleared by the tab that holds it.
+    const id = Math.random().toString(36).slice(2);
+    const lock = () => {
+      const l = store.get('sourcesLock');
+      return l && typeof l === 'object' ? l : { at: Number(l) || 0, id: '' };
+    };
+    const busy = () => {
       if (loud) toast('Another tab is updating the rule lists right now.', 'err');
       return null;
-    }
-    store.set('sourcesLock', now);
-    store.set('sourcesTried', now);
+    };
+    if (Date.now() - lock().at < 60000) return busy();
+    const take = () => store.set('sourcesLock', { at: Date.now(), id });
+    take();
+    store.set('sourcesTried', Date.now());
+    // Managers hand values between tabs a moment late; if two tabs took it at once, the later write wins.
+    await new Promise((r) => setTimeout(r, 50));
+    if (lock().id !== id) return busy();
     try {
       const cache = Object.assign({}, store.get('sourceCache'));
       const failures = [];
       for (const u of urls) {
+        take();
         let res;
         try { res = acceptRuleList(cache[u], await fetchText(u), Date.now()); } catch (e) { res = { entry: cache[u], error: e.message }; }
         if (res.error) {
           console.warn(TAG, 'rule list kept its last good copy', u, res.error);
           failures.push(`${safeHost(u)}: ${res.error}`);
         } else {
-          cache[u] = res.entry;
-          if (loud) toast(`${res.entry.rules.length} rules from ${safeHost(u)}`, 'ok');
+          cache[u] = await buildListEntry(res.entry.rules, res.entry.at);
+          if (loud) toast(`${cache[u].count} rules from ${safeHost(u)}`, 'ok');
         }
         if (!cache[u]) delete cache[u];
       }
       // Lists no longer configured leave the cache.
       for (const k of Object.keys(cache)) if (!urls.includes(k)) delete cache[k];
-      const all = [].concat(...Object.values(cache).map((e) => e.rules));
-      // Specific patterns first, so a catch-all never shadows a site rule.
-      all.sort((a, b) => b.url.length - a.url.length);
       store.set('sourceCache', cache);
-      store.set('sourceRules', all);
+      // 0.1.0 kept every list's rules flattened. That copy goes once every list
+      // has a packed one, and not before: a failed refresh must not lose them.
+      if (urls.every((u) => cache[u] && typeof cache[u].rules === 'string')) store.set('sourceRules', []);
+      forgetListRules();
       if (failures.length) toast('Kept the last good copy of a rule list. ' + failures.join('; '), 'err');
       else store.set('sourcesUpdated', Date.now());
-      return all;
+      return Object.values(cache).reduce((n, e) => n + listCount(e), 0);
     } finally {
-      store.set('sourcesLock', 0);
+      if (lock().id === id) store.set('sourcesLock', 0);
     }
   }
 
@@ -2185,7 +2394,18 @@
         };
         // A rule is only used where it works on this page; otherwise the next
         // rule, then detection. A site rule still rendering gets the retries first.
-        const choice = chooseRule(s.rules, s.sourceRules, location.href, document, attempt);
+        // This address's rule list candidates, unpacked once (a promise the first time).
+        if (this.listHref !== location.href) {
+          const href = location.href;
+          loadListRules(href).catch((e) => { console.warn(TAG, 'rule lists unreadable', e); return []; }).then((rules) => {
+            if (this.gen !== gen) return;
+            this.listRules = rules;
+            this.listHref = href;
+            this.tryStart(attempt, opts);
+          });
+          return;
+        }
+        const choice = chooseRule(s.rules, this.listRules, location.href, document, attempt);
         if (choice.wait) { this.status = 'waiting for the page to render'; return retry(); }
         const rule = choice.rule;
         const userRule = !!choice.mine;
@@ -2308,6 +2528,6 @@
 
   return {
     VERSION, boot, hostListed, pathSkipped, nextByAddress, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, itemKey, pageKeys, splitRepeats, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });

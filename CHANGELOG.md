@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Rule lists take a third of the space they did: about 330 KB for the whole wedata list instead of 970 KB. That matters because some userscript managers hand a script's whole storage to every page it runs on. A page now looks up only the rules for its own site and the few general ones its address could match, instead of testing all 3,800, and reads the lists once. Lists saved by 0.1.0 keep working until their first refresh succeeds.
 - Fewer blank images on added pages. Onward now knows every attribute Pagetual reads for lazy images and a few more (`data-lazyload`, `data-orig-file`, `data-ks-lazyload`, `data-defer-src`, `lazysrc`, `_src`, Discuz's `zoomfile` and `file`, and others), prefers the full-size address, replaces a placeholder `srcset` with `data-srcset`, and turns `data-bg` and `data-background-image` into a real background image.
 - Onward stays off checkout, cart, sign-in, sign-up, account and password pages by default, since adding pages there can break the flow. The pattern is editable in Settings, and "Run Onward here anyway" still works. A new "Run on: only sites I list" setting keeps Onward off everywhere except the sites you name; the toggle command adds or removes the current site.
 - New menu command "Load 5 more pages" loads up to five pages one after another without scrolling, counting them in the loading bar. It keeps to the page limit and the gap between requests, and waits for a page that's already loading.

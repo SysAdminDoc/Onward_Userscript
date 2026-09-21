@@ -1337,7 +1337,9 @@ test('only one tab refreshes the rule lists at a time', async () => {
   const stored = await a.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
   assert.equal(site.hits.rules, 1, 'the list was fetched once');
   assert.match(await b.evaluate(onwardText), /Another tab is updating/);
-  assert.equal(stored.sourceRules.length, 2);
+  assert.equal(stored.sourceCache[list].count, 2, 'stored packed, with its count');
+  assert.equal(typeof stored.sourceCache[list].rules, 'string', 'packed');
+  assert.deepEqual(stored.sourceRules, [], 'no flattened copy');
   assert.ok(stored.sourcesUpdated > 0, 'marked fresh');
   assert.equal(stored.sourcesLock, 0, 'lock released');
   await ctx.close();
@@ -1358,6 +1360,79 @@ test('a rule list that comes back as an error page keeps its last good copy', as
   assert.equal(stored.sourcesUpdated, 0, 'not marked fresh');
   assert.ok(stored.sourcesTried > 0, 'but the attempt is recorded, for the back-off');
   assert.match(await pg.evaluate(onwardText), /Kept the last good copy/);
+  await ctx.close();
+});
+
+test('rules 0.1.0 cached are kept when the first refresh after the update fails', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const pg = await ctx.newPage();
+  await pg.goto(base + '/blog?page=1');
+  const list = base + '/rules.json?mode=html';
+  const rules = [1, 2, 3].map((k) => ({ name: '', url: `^https://keep${k}\\.example/`, next: 'a.n', insert: '', mode: '', click: false, excludeUrl: '' }));
+  await pg.evaluate(([l, r]) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourceRules: r, sourcesUpdated: 0, sourcesTried: 0 })), [list, rules]);
+  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await pg.waitForTimeout(2500);
+  const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
+  assert.equal(stored.sourceRules.length, 3, 'still there');
+  assert.deepEqual(stored.sourceCache, {}, 'with nothing newer to replace them');
+  assert.match(await pg.evaluate(onwardText), /Kept the last good copy/);
+  await ctx.close();
+});
+
+test('a packed rule list is used on the site it names', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const pg = await ctx.newPage();
+  const logs = [];
+  pg.on('console', (m) => logs.push(m.text()));
+  await pg.goto(base + '/blog?page=1');
+  const list = base + '/rules.json?mode=site';
+  await pg.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourcesUpdated: 0, sourcesTried: 0 })), list);
+  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await pg.waitForFunction((l) => ((JSON.parse(localStorage.getItem('__gm') || '{}').sourceCache || {})[l] || {}).count > 0, list, { timeout: 10000 });
+  const entry = await pg.evaluate((l) => JSON.parse(localStorage.getItem('__gm')).sourceCache[l], list);
+  assert.equal(entry.count, 201);
+  assert.ok(JSON.stringify(entry).length < 6000, 'packed: ' + JSON.stringify(entry).length + ' characters');
+  // The next page load reads the packed list and pages this site by its rule.
+  await pg.reload();
+  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  assert.ok(logs.some((l) => /active: rule/.test(l)), 'by the list rule');
+  await ctx.close();
+});
+
+test('rule lists are read from storage once per page, however often Onward looks again', async () => {
+  // The last page has no next link, so Onward looks three times (now, after 1.5 s and after 4 s).
+  const { pg, ctx, errors } = await open('/blog?page=4', () => {
+    window.__reads = {};
+    const data = { sourceRules: [{ name: '', url: '^https://nowhere\\.example/', next: 'a.n', insert: '', mode: '', click: false, excludeUrl: '' }], sourceCache: {} };
+    window.__gm = new Proxy(data, { has(t, k) { window.__reads[k] = (window.__reads[k] || 0) + 1; return k in t; } });
+  });
+  await pg.waitForTimeout(6500);
+  const reads = await pg.evaluate(() => window.__reads);
+  assert.ok(reads.rules >= 3, 'it did look three times: ' + reads.rules);
+  assert.equal(reads.sourceRules, 1);
+  assert.equal(reads.sourceCache, 1);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a tab never clears a refresh lock another tab has taken over', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const pg = await ctx.newPage();
+  await pg.goto(base + '/blog?page=1');
+  const list = base + '/rules.json?mode=good';
+  await pg.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourcesUpdated: 0, sourcesTried: 0 })), list);
+  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await pg.waitForTimeout(400); // mid-download (1.5 s)
+  await pg.evaluate(() => {
+    const g = JSON.parse(localStorage.getItem('__gm'));
+    g.sourcesLock = { at: Date.now(), id: 'other' };
+    localStorage.setItem('__gm', JSON.stringify(g));
+  });
+  await pg.waitForTimeout(2500);
+  const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
+  assert.equal(stored.sourcesLock.id, 'other', "the other tab's lock stays");
+  assert.equal(stored.sourceCache[list].count, 2, 'and this tab still stored what it fetched');
   await ctx.close();
 });
 

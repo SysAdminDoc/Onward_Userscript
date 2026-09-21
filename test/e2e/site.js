@@ -221,6 +221,12 @@ function route(url, req) {
     // A rule list; mode=html answers like a mirror serving its error page. Slow, so a refresh takes a while.
     hits.rules++;
     if (u.searchParams.get('mode') === 'html') return { body: '<html><body><h1>502 Bad Gateway</h1></body></html>', delay: 1500 };
+    if (u.searchParams.get('mode') === 'site' && req) {
+      // 200 rules for other sites, and one for this server's blog.
+      const host = req.headers.host.replace(/\./g, '\\.');
+      const others = Array.from({ length: 200 }, (_, i) => ({ url: `^https://site${i}\\.example/`, next: 'a.n', content: '.x' }));
+      return { body: JSON.stringify(others.concat({ name: 'fixture blog', url: `^http://${host}/blog`, next: '.pagination a.next', content: 'ul.posts > li.post' })), type: 'application/json' };
+    }
     return { body: JSON.stringify([{ url: '^https://one\\.example/', next: 'a.n' }, { url: '^https://two\\.example/', next: 'a.n' }]), type: 'application/json', delay: 1500 };
   }
   if (u.pathname === '/spaced') {

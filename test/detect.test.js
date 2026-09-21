@@ -415,6 +415,76 @@ test('rules from a downloaded list never click; rules you write can', () => {
   assert.equal(O.chooseRule([], legacy, 'https://shop.example/cart', d, 2).rule, null, 'no clicking rule from a list');
 });
 
+test('rule lists: packing round-trips', async () => {
+  const value = { hosts: { 'a.com': [0, 2] }, rules: Array.from({ length: 50 }, (_, i) => ({ url: '^https://site' + i + '\\.example/', next: 'a.next' })) };
+  const packed = await O.packJSON(value);
+  assert.ok(!packed.startsWith('j:'), 'gzipped here');
+  assert.ok(packed.length < JSON.stringify(value).length / 3, 'and much smaller: ' + packed.length);
+  assert.deepEqual(await O.unpackJSON(packed), value);
+  assert.deepEqual(await O.unpackJSON('j:' + JSON.stringify(value)), value, 'the plain fallback reads back too');
+});
+
+test('rule lists: the hosts a pattern names', () => {
+  const cases = [
+    ['^https?://example\\.com/list', ['example.com']],
+    ['^https://www.amazon.co.jp/vine/', ['www.amazon.co.jp']],
+    ['^https?://(?:www\\.)?example\\.com/', ['www.example.com', 'example.com']],
+    ['^https://xxxclub\\.(cc|to)/', ['xxxclub.cc', 'xxxclub.to']],
+    ['^https://www\\.dmm\\.co(?:m|\\.jp)/mono/', ['www.dmm.com', 'www.dmm.co.jp']],
+    ['^https?://example\\.com:8080/', ['example.com']],
+    ['^https?://example\\.com(?:/|$)', ['example.com']],
+    ['https://www.dlsite.com/*/mypage', ['www.dlsite.com']],
+    ['^http:\\/\\/old\\.example\\.org\\/', ['old.example.org']],
+  ];
+  for (const [pattern, hosts] of cases) assert.deepEqual(O.literalHosts(pattern), hosts, pattern);
+  for (const pattern of ['^https?://[^/]+\\.weblio\\.jp/', '^https?://.', '^https://\\d+\\.peta2\\.jp/', '^(https://)?m\\.xsnvshen\\.com/', '^https?://\\w+\\.example\\.com/'])
+    assert.equal(O.literalHosts(pattern), null, pattern);
+});
+
+test('rule lists: the text every match of a pattern needs', () => {
+  const cases = [
+    ['^https://[^/]+\\.weblio\\.jp/.', '.weblio.jp/'],
+    ['^https?://(?:[^.]+\\.)?breached\\.vc/', 'breached.vc/'],
+    ['^https?://[^./]+\\.google(?:\\.[^./]{2,3}){1,2}/search', '.google'],
+    ['^(https://)?m\\.xsnvshen\\.com/album/', 'm.xsnvshen.com/album/'],
+    ['^https?://.', 'http'],
+    ['^https?://(a|b)\\.example\\.com/', '.example.com/'],
+    ['foo|bar', ''],
+    ['^https?://x\\.y/', '://x.y/'],
+    ['^\\d+/[a-z]+/\\d', ''],
+    ['^https?://blogs?\\.example\\.com/', '.example.com/'],
+  ];
+  for (const [pattern, lit] of cases) assert.equal(O.requiredLiteral(pattern), lit, pattern);
+});
+
+test('rule lists: a page looks up its host and only the other rules its address matches', async () => {
+  const rules = O.normalizeRules([
+    { url: '^https://example\\.com/list', next: 'a.n' },
+    { url: '^https://example\\.com/', next: 'a.m' },
+    { url: '^https://other\\.com/', next: 'a.n' },
+    { url: '^https?://[^/]+\\.blogspot\\.com/', next: 'a.b' },
+    { url: '^https?://.', next: 'a.all' },
+  ], { fromList: true });
+  O.forgetListRules();
+  const entry = await O.buildListEntry(rules, 5);
+  assert.equal(entry.count, 5, 'the count covers the whole list');
+  assert.equal(entry.hosts, '\nexample.com 0,1\nother.com 2\n', 'a line per host');
+  assert.deepEqual(entry.generic.map((g) => g[1]), ['.blogspot.com/'], 'the catch-all is left out; the other keeps the text it needs');
+  assert.equal((await O.unpackJSON(entry.rules)).length, 4);
+  const cache = { 'https://lists.example/one.json': entry };
+  const at = async (href) => (await O.listRulesFor(cache, href)).map((r) => r.next);
+  assert.deepEqual(await at('https://example.com/list/2'), ['a.n', 'a.m'], 'its host, longest pattern first');
+  assert.deepEqual(await at('https://foo.blogspot.com/2024/'), ['a.b']);
+  assert.deepEqual(await at('https://unlisted.example.net/'), []);
+  assert.deepEqual(await at('https://ample.com/'), [], 'a host line is matched whole');
+  const [first] = await O.listRulesFor(cache, 'https://other.com/x');
+  assert.equal(first.source, 'https://lists.example/one.json', 'each rule knows its list');
+  assert.equal(first.click, false);
+  // A list kept unpacked by an earlier build is still read.
+  const legacy = { 'https://lists.example/old.json': { rules: rules.slice(2, 3), at: 1 } };
+  assert.deepEqual((await O.listRulesFor(legacy, 'https://other.com/')).map((r) => r.next), ['a.n']);
+});
+
 test('a rule list that comes back broken keeps the last good copy', () => {
   const good = { rules: O.normalizeRules([{ url: '^https://a\\.com/', next: 'a.n' }, { url: '^https://b\\.com/', next: 'a.n' }, { url: '^https://c\\.com/', next: 'a.n' }]), at: 1 };
   const html = '<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>'.padEnd(122, ' ');
@@ -424,6 +494,7 @@ test('a rule list that comes back broken keeps the last good copy', () => {
   assert.match(bad.error, /not JSON/);
   assert.match(O.acceptRuleList(good, '[]', 2).error, /no rules/);
   assert.match(O.acceptRuleList(good, JSON.stringify([{ url: '^https://a\\.com/', next: 'x' }]), 2).error, /down from 3/);
+  assert.match(O.acceptRuleList({ count: 10, index: 'x', rules: 'y', at: 1 }, JSON.stringify([{ url: '^https://a\\.com/', next: 'x' }]), 2).error, /down from 10/, 'a packed copy counts too');
   const fresh = O.acceptRuleList(good, JSON.stringify([{ url: '^https://d\\.com/', next: 'x' }, { url: '^https://e\\.com/', next: 'x' }]), 2);
   assert.equal(fresh.error, undefined);
   assert.equal(fresh.entry.rules.length, 2);
