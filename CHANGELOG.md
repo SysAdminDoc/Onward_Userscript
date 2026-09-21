@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Onward only loads next pages from the page's own origin (same scheme, host and port), apart from switching an `http` link to `https` on a secure page. A page that redirects to another site is refused. Rule-list downloads no longer send your cookies.
 - Rules from a downloaded rule list can no longer make Onward click buttons. Only rules you write or pick yourself can use `click`.
 - Rule lists keep their last good copy. A download that isn't a rule list (a mirror's error page, for instance), has no rules, or lost more than half of them is ignored with a message, and Onward tries again later instead of waiting a week. Only one tab refreshes the lists at a time.
 - Pages Onward adds can no longer act on the page you're reading. A refresh tag can't send your tab elsewhere, a `<base>` tag can't redirect your links, frames with inline documents and `javascript:` links are removed, and `<noscript>` blocks are dropped. Images that kept their real address inside `<noscript>` get it back first.

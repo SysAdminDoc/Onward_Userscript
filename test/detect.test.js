@@ -80,6 +80,14 @@ test('a "More" menu link in the header is not a pager', () => {
   assert.equal(next(d), null);
 });
 
+test('next links must stay on the page\'s origin (besides the https upgrade)', () => {
+  const pager = (href) => dom(`<nav class="pager"><a href="${href}">Next</a></nav>`);
+  assert.equal(next(pager('https://example.com:8443/list/2')), null, 'another port');
+  assert.equal(next(pager('https://sub.example.com/list/2')), null, 'another host');
+  assert.equal(next(pager('https://example.com/list/2'), 'http://example.com/list/'), null, 'https from an http page is another origin');
+  assert.equal(next(pager('http://example.com:8080/list/2'), 'http://example.com:8080/list/').url, 'http://example.com:8080/list/2', 'same scheme, host and port');
+});
+
 test('http next link is upgraded on an https page', () => {
   const d = dom('<nav class="pager"><a href="http://example.com/list/2">Next</a></nav>');
   assert.equal(next(d).url, 'https://example.com/list/2');

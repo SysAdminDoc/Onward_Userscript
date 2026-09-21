@@ -203,7 +203,9 @@
     opts = opts || {};
     const layout = opts.layout !== undefined ? opts.layout : hasLayout(doc);
     const here = stripHash(pageUrl);
-    const host = safeHost(pageUrl);
+    // Same origin only (scheme, host and port): a next link elsewhere would be
+    // fetched with the user's cookies into a page whose scripts can read it.
+    const origin = safeOrigin(pageUrl);
     const seen = opts.seen || new Set();
 
     const acceptUrl = (href) => {
@@ -212,7 +214,7 @@
       if (!u || !/^https?:/.test(u)) return null;
       if (/^https:/.test(pageUrl) && /^http:/.test(u)) u = u.replace(/^http:/, 'https:');
       if (stripHash(u) === here || seen.has(stripHash(u))) return null;
-      if (safeHost(u) !== host) return null;
+      if (safeOrigin(u) !== origin) return null;
       return u;
     };
 
@@ -771,7 +773,8 @@
     return new Promise((resolve, reject) => {
       if (signal && signal.aborted) return reject(new Error('aborted'));
       const req = GM_xmlhttpRequest({
-        method: 'GET', url, responseType: 'arraybuffer', timeout: FETCH_TIMEOUT_MS,
+        // Only rule lists come this way (pages are same-origin fetches), and they need no cookies.
+        method: 'GET', url, responseType: 'arraybuffer', timeout: FETCH_TIMEOUT_MS, anonymous: true,
         onload: (r) => {
           if (r.status >= 400) return reject(new Error('HTTP ' + r.status));
           const type = (/content-type:\s*([^\r\n]+)/i.exec(r.responseHeaders || '') || [])[1];
@@ -1270,6 +1273,7 @@
         const r = await fetchBytes(url, signal);
         if (this.destroyed) return;
         finalUrl = r.finalUrl || url;
+        if (safeOrigin(finalUrl) !== location.origin) throw new Error('redirected to another site');
         doc = parseHtml(decode(r.bytes, r.type, document.characterSet));
         if (!extractItems(doc, this).length && this.mode === 'auto' && safeOrigin(url) === location.origin) {
           // Probably rendered by scripts; a hidden iframe lets them run.
@@ -1339,7 +1343,7 @@
         const el = resolvePath(doc, this.nextPath);
         const href = el && el.getAttribute('href');
         const u = href && absUrl(href, url);
-        if (u && /^https?:/.test(u) && !this.seen.has(stripHash(u)) && stripHash(u) !== stripHash(url)
+        if (u && safeOrigin(u) === safeOrigin(url) && !this.seen.has(stripHash(u)) && stripHash(u) !== stripHash(url)
             && labelOf(el).join(' ') === labelOf(this.next.el).join(' ')) {
           return { url: u, el, how: 'path' };
         }
