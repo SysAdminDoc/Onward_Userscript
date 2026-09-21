@@ -189,6 +189,21 @@ test('blog: appends pages 2-4, fixes lazy images, updates URL, stops at the end'
   await ctx.close();
 });
 
+test('the site\'s pager follows the pages added, and comes back when Onward is turned off', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  const current = () => Array.from(document.querySelectorAll('.pagination')).map((p) => p.querySelector('.current')?.textContent).join(',');
+  assert.equal(await pg.evaluate(current), '1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 15), 'page 3 is in');
+  await pg.waitForTimeout(100);
+  const n = await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length / 5);
+  assert.equal(await pg.evaluate(current), String(n), 'one pager, on the last page added');
+  assert.match(await pg.evaluate(() => document.querySelector('.pagination a[href*="page=1"]').getAttribute('href')), /^http:\/\/127\.0\.0\.1:\d+\/blog\?page=1$/, 'its links are absolute');
+  await pg.evaluate(() => { window.__menu['Toggle Onward on this site'](); });
+  assert.equal(await pg.evaluate(current), '1', 'the original pager is back');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('with page bars hidden, the address still follows the page in view', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1', () => { window.__gm = { separators: false }; });
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');

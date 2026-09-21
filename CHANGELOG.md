@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- The site's own pager under the list now follows the pages Onward adds. After page 3 it shows page 3 as the current one and its links lead on from there, where it used to still point at page 2. Turning Onward off puts the original back.
 - Pages can load only when you ask. A new setting, "Load pages: when I click", everywhere or for one site, stops loading as you scroll and puts a "Load page N" button at the end of the list, so the footer stays in reach. Every page bar also has "Skip to footer", which jumps past the list and holds loading off for 30 seconds.
 - Scripts written for AutoPagerize work with Onward. It sends the same events (`GM_AutoPagerizeLoaded`, `GM_AutoPagerizeNextPageLoaded`, and `AutoPagerize_DOMNodeInserted` on each added element), marks what it adds with the `autopagerize_page_element` class, and answers `AutoPagerizeDisableRequest`, `AutoPagerizeEnableRequest` and `AutoPagerizeToggleRequest`. The README lists every event, `onward:page` included.
 - Settings now shows diagnostics for the page you're on: how Onward found the next link (and its score), the list and its item count, the loading mode, whether pages are wrapped, what scrolls, the rule it used and which list that rule came from, and the last error. "Copy diagnostics" copies it as plain text for a bug report. Nothing is sent or filed anywhere.

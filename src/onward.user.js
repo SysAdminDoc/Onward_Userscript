@@ -1335,6 +1335,9 @@
       this.nextLabel = labelKey(next.el);
       this.container = content.container;
       this.path = describePath(content.container);
+      // The site's own pager, kept in step with the pages added (fetch mode).
+      this.pagerEl = next.url === null || next.el.tagName === 'LINK' ? null : this.findPager(next.el);
+      this.pagerPath = this.pagerEl ? describePath(this.pagerEl) : null;
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
       this.firstKey = content.items.length ? itemKey(content.items[0], true) : null;
       this.firstItem = content.items[0] || null;
@@ -1615,6 +1618,8 @@
       if (this.anchor) this.anchor.remove();
       for (const n of this.inserted) n.remove();
       this.inserted = [];
+      // The site's own pager goes back too.
+      if (this.pagerOriginal && this.pagerEl && this.pagerEl.isConnected) this.pagerEl.replaceWith(this.pagerOriginal);
     }
 
     onScroll() {
@@ -1894,6 +1899,7 @@
         for (const k of freshKeys) this.itemKeys.add(k);
         this.seen.add(stripHash(url));
         this.seen.add(stripHash(finalUrl));
+        this.replacePager(doc, finalUrl);
         bar.first = this.lastInserted;
         bar.size = this.wrap ? 1 : prepared.length;
         announce(`Page ${this.page} loaded, ${prepared.length} ${prepared.length === 1 ? 'item' : 'items'}.`);
@@ -1965,6 +1971,32 @@
       this.page++;
       announce('More items loaded.');
       this.onPageAppended(null);
+    }
+
+    /** The site's pager around the next link, outside the list. */
+    findPager(el) {
+      for (let n = el.parentElement, i = 0; n && n !== document.body && i < 6; n = n.parentElement, i++) {
+        if (n.contains(this.container) || this.container.contains(n)) return null;
+        if (n.tagName === 'NAV' || n.getAttribute('role') === 'navigation' || PAGINATION_RE.test((n.id || '') + ' ' + (n.getAttribute('class') || ''))) return n;
+      }
+      return null;
+    }
+
+    /**
+     * Swap the site's pager for the one on the page just added, so its current
+     * page and its links match what's on screen (the old one still pointed at
+     * page 2). Fetch mode only: an iframe's document is gone by then.
+     */
+    replacePager(doc, base) {
+      if (!this.pagerPath || this.mode === 'iframe' || !this.pagerEl || !this.pagerEl.isConnected) return;
+      const theirs = resolvePath(doc, this.pagerPath);
+      if (!theirs || theirs === doc.body) return;
+      const [fresh] = prepareItems([theirs], base);
+      if (!fresh) return;
+      const mine = document.importNode(fresh, true);
+      if (!this.pagerOriginal) this.pagerOriginal = this.pagerEl;
+      this.pagerEl.replaceWith(mine);
+      this.pagerEl = mine;
     }
 
     onPageAppended(url) {
