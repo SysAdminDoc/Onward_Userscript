@@ -215,6 +215,11 @@
     try { const x = new URL(u); x.hash = ''; return x.href; } catch (e) { return u; }
   }
 
+  /** A #/route or #!/route hash names a view of a single-page app; #comments is just a spot on the page. */
+  const routeHash = (u) => /#!?\//.test(u);
+  /** Two addresses of the same page, maybe scrolled to another spot on it. */
+  const samePage = (a, b) => a === b || (stripHash(a) === stripHash(b) && !routeHash(a) && !routeHash(b));
+
   /** Clicking it would load another page: a link with a real address. */
   const navigates = (el) => {
     const href = el.getAttribute('href');
@@ -1416,6 +1421,11 @@
       this.onScroll();
     }
 
+    /** Nothing to add pages to: the list itself (load-more mode), or our place in it, is gone. */
+    listGone() {
+      return this.buttonMode ? !this.container.isConnected : this.lost();
+    }
+
     /** Frameworks sometimes redraw the list and throw away what we added. */
     lost() {
       return !this.anchor.isConnected || (this.lastInserted && !this.lastInserted.isConnected);
@@ -1536,6 +1546,8 @@
 
     syncUrl() {
       if (!this.s.updateUrl || !this.separators.length || this.buttonMode) return;
+      // The site went to an address of its own (a route change): not Onward's to rewrite.
+      if (![this.startUrl, this.selfUrl, ...this.separators.map((s) => s.url)].some((u) => u && samePage(u, location.href))) return;
       const line = win.innerHeight * 0.35;
       let url = this.startUrl;
       for (const s of this.separators) {
@@ -1556,6 +1568,8 @@
     // auto: asked for by scrolling, so dropped if the page no longer needs it.
     async loadNext(auto) {
       if (this.busy || this.stopped) return;
+      // The list is gone (redrawn, or the site moved to another view): nothing loads or clicks into it.
+      if (this.listGone()) return this.handleLost();
       if (this.page >= this.s.maxPages) return this.stop(`Stopped after ${this.s.maxPages} pages (change the limit in settings).`, 'end', 'limit');
       this.busy = true;
       this.paused = false;
@@ -1738,8 +1752,22 @@
     }
 
     async clickMore(bar) {
-      const el = this.next.el.isConnected ? this.next.el : (resolvePath(document, this.nextPath) || this.next.el);
-      if (!el.isConnected || !isVisible(el, true) || el.disabled) {
+      // The list may have gone while this click waited its turn.
+      if (this.listGone()) {
+        this.removeBar(bar);
+        return this.handleLost();
+      }
+      // The button: the same element, or one the site drew in its place with the
+      // same label. Whatever else sits there now (a Delete button after a route
+      // change, say) is never clicked.
+      const label = labelOf(this.next.el).join(' ');
+      const ready = () => {
+        const el = this.next.el.isConnected ? this.next.el : resolvePath(document, this.nextPath);
+        if (!el || !el.isConnected || !isVisible(el, true) || el.disabled) return null;
+        return el === this.next.el || labelOf(el).join(' ') === label ? el : null;
+      };
+      const el = ready();
+      if (!el) {
         this.removeBar(bar);
         return this.stop('No more items.');
       }
@@ -2599,8 +2627,8 @@
     let lastUrl = location.href;
     const urlChanged = (delay) => {
       if (location.href === lastUrl) return;
-      // A jump to #comments or #top stays on the same page.
-      const hashOnly = stripHash(location.href) === stripHash(lastUrl);
+      // A jump to #comments or #top stays on the same page; a hash route (#/item) doesn't.
+      const hashOnly = samePage(location.href, lastUrl);
       const ours = location.href === app.expectUrl
         || (app.pager && (location.href === app.pager.selfUrl || app.pager.separators.some((x) => x.url === location.href) || location.href === app.pager.startUrl));
       lastUrl = location.href;

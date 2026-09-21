@@ -86,6 +86,72 @@ function route(url, req) {
           if (top !== self) for (const [el, where] of tracks) parent.postMessage({ type: 'media', page: location.search, where, muted: el.muted, paused: el.paused }, '*');
         });</script>`) };
   }
+  if (u.pathname === '/hashapp') {
+    // A hash-routed app (#/cats, #/dogs) that draws its whole view per route, with a Load more button.
+    return { body: page('Hash app', `<div id="view"></div>
+      <script>function render() {
+        const r = location.hash.replace(/^#\\/?/, '') || 'cats'; let n = 1;
+        const v = document.getElementById('view');
+        v.innerHTML = '<ul class="posts" id="list"></ul><button class="load-more" id="lm">Load more</button>';
+        const add = () => { for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = r + ' ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); } };
+        add();
+        document.getElementById('lm').onclick = () => { n++; setTimeout(() => { add(); if (n >= ${LAST}) document.getElementById('lm').remove(); }, 150); };
+      }
+      addEventListener('hashchange', render); render();</script>`) };
+  }
+  if (u.pathname === '/hashapp2') {
+    // A hash-routed app: #/list is a long list with Load more; #/item is a detail view whose first button deletes.
+    return { body: page('Hash app 2', `<div id="view"></div>
+      <script>window.__deleted = 0;
+      function render() {
+        const v = document.getElementById('view');
+        if (location.hash === '#/item') {
+          v.innerHTML = '<h2>Item 7</h2><p>Details of item 7.</p><button class="danger" id="del">Delete this item</button><p style="height:900px">More details.</p>';
+          document.getElementById('del').onclick = () => { window.__deleted++; };
+          return;
+        }
+        v.innerHTML = '<ul class="posts" id="list"></ul><button class="load-more" id="lm">Load more</button>';
+        for (let i = 1; i <= 20; i++) { const li = document.createElement('li'); li.className = 'post'; li.innerHTML = '<a href="#/item">Item ' + i + '</a> with summary text'; document.getElementById('list').append(li); }
+        document.getElementById('lm').onclick = () => { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'More item with summary text'; document.getElementById('list').append(li); };
+      }
+      addEventListener('hashchange', render); render();</script>`) };
+  }
+  if (u.pathname === '/spascroll') {
+    // A router that pushes a new address and scrolls to the top (most do), then swaps the list's rows.
+    const f = u.searchParams.get('filter');
+    const list = f ? posts(n).replace(/Post (\d+)/g, 'Filtered $1') : posts(n);
+    const base = f ? '/spascroll?filter=x&page=' : '/spascroll?page=';
+    const newItems = JSON.stringify(posts(1).replace(/Post (\d+)/g, 'Filtered $1'));
+    const newPager = JSON.stringify(pager('/spascroll?filter=x&page=', 1, 'Next'));
+    return { body: page('SPA scroll ' + n, `<button id="filter" style="position:fixed;top:40px;right:10px;z-index:9">Filter</button><div id="app"><ul class="posts">${list}</ul><div id="pg">${pager(base, n, 'Next')}</div></div>
+      <script>document.getElementById('filter').onclick = () => {
+        history.pushState({}, '', '/spascroll?filter=x&page=1');
+        window.scrollTo(0, 0);
+        setTimeout(() => {
+          const ul = document.querySelector('#app ul.posts');
+          for (const li of ul.querySelectorAll(':scope > li.post')) li.remove();
+          ul.insertAdjacentHTML('beforeend', ${newItems});
+          document.getElementById('pg').innerHTML = ${newPager};
+        }, 500);
+      };</script>`) };
+  }
+  if (u.pathname === '/spascroll2') {
+    // /spascroll, but the router updates its own rows in place and leaves foreign nodes alone.
+    const f = u.searchParams.get('filter');
+    const list = f ? posts(n).replace(/Post (\d+)/g, 'Filtered $1') : posts(n);
+    const base = f ? '/spascroll2?filter=x&page=' : '/spascroll2?page=';
+    const newPager = JSON.stringify(pager('/spascroll2?filter=x&page=', 1, 'Next'));
+    return { body: page('SPA scroll2 ' + n, `<button id="filter" style="position:fixed;top:40px;right:10px;z-index:9">Filter</button><div id="app"><ul class="posts">${list}</ul><div id="pg">${pager(base, n, 'Next')}</div></div>
+      <script>const own = Array.from(document.querySelectorAll('#app ul.posts > li.post'));
+      document.getElementById('filter').onclick = () => {
+        history.pushState({}, '', '/spascroll2?filter=x&page=1');
+        window.scrollTo(0, 0);
+        setTimeout(() => {
+          own.forEach((li, i) => { const a = li.querySelector('a'); a.textContent = 'Filtered ' + (i + 1); a.href = '/post/f' + (i + 1); });
+          document.getElementById('pg').innerHTML = ${newPager};
+        }, 500);
+      };</script>`) };
+  }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {
     // Loads more by itself near the bottom, and still advertises rel=next for crawlers.

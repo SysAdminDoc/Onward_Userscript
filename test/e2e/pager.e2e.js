@@ -1627,6 +1627,55 @@ test('diagnostics name the rule and the last error', async () => {
   await ctx.close();
 });
 
+test('a hash route to another list restarts Onward there', async () => {
+  const { pg, ctx, errors } = await open('/hashapp#/cats');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 10), 'the cats list pages');
+  await pg.evaluate(() => { window.scrollTo(0, 0); location.hash = '#/dogs'; });
+  await pg.waitForTimeout(2500);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 20, 40), 'the dogs list pages to the end');
+  assert.ok(await pg.evaluate(() => Array.from(document.querySelectorAll('#list > li.post')).every((li) => /^dogs /.test(li.textContent))));
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('after a hash route to a detail view, Onward clicks nothing there', async () => {
+  const { pg, ctx, errors } = await open('/hashapp2#/list');
+  await pg.waitForTimeout(1500);
+  // The reader opens an item before reaching the end of the list (so still on
+  // page 1); its view has a Delete button where Load more was.
+  await pg.evaluate(() => { location.hash = '#/item'; });
+  await pg.waitForTimeout(500);
+  await pg.evaluate(() => window.scrollBy(0, 20));
+  // Past the first-time wait (3 s) and the gap between loads.
+  await pg.waitForTimeout(5000);
+  assert.equal(await pg.evaluate(() => window.__deleted), 0, 'the Delete button was clicked');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+for (const fixture of ['/spascroll', '/spascroll2']) {
+  test(`a router that scrolls to the top keeps its new address, and its list gets its own pages (${fixture})`, async () => {
+    const { pg, ctx, errors } = await open(fixture + '?page=1');
+    assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#app ul.posts > li.post').length >= 10), 'page 2 of the first route');
+    // Reading page 2: the address follows it.
+    const y = await pg.evaluate(() => document.querySelector('a[href$="/post/7"]').closest('li').getBoundingClientRect().top + scrollY);
+    await pg.evaluate((v) => window.scrollTo(0, v - 100), y);
+    await pg.waitForTimeout(1500);
+    assert.equal(await pg.evaluate(() => location.search), '?page=2', 'the address follows page 2');
+    await pg.click('#filter');
+    await pg.waitForTimeout(3000);
+    assert.equal(await pg.evaluate(() => location.search), '?filter=x&page=1', 'the new route keeps its address');
+    assert.ok(await scrollToEnd(pg, endBar, 40), 'the new list pages to the end');
+    const stale = await pg.evaluate(() => Array.from(document.querySelectorAll('#app ul.posts > li.post > a')).map((a) => a.textContent).filter((t) => !/^Filtered/.test(t)));
+    assert.deepEqual(stale, [], 'no posts of the old route under the new one');
+    await pg.evaluate(() => window.scrollTo(0, 0));
+    await pg.waitForTimeout(1200);
+    assert.equal(await pg.evaluate(() => location.search), '?filter=x&page=1', 'back at the top of the new list');
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
