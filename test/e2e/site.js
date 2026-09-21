@@ -348,6 +348,11 @@ function route(url, req) {
     const box = '<div id="box" style="position:fixed;right:0;top:100px;width:220px;height:300px;overflow:auto;overscroll-behavior:contain;background:#eef"><div style="height:3000px">box</div></div>';
     return { body: page('Parkbox ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/parkbox?page=', n, 'Next', LONG_LAST)}`).replace('<footer>footer</footer>', `<footer>footer</footer>${box}`) };
   }
+  if (u.pathname === '/walls') {
+    // A wallpaper grid: every tile is a picture and the same Download button, no link.
+    const tiles = Array.from({ length: PER }, (_, i) => `<li class="w"><img src="/img/${(n - 1) * PER + i + 1}.png" width="200" height="100" alt=""><button type="button">Download</button></li>`).join('');
+    return { body: page('Walls ' + n, `<ul class="walls" id="walls">${tiles}</ul>${pager('/walls?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

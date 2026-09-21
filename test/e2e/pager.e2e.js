@@ -844,6 +844,15 @@ test('page 1 served again after the site lazy-loaded its images ends paging', as
   await ctx.close();
 });
 
+test('a wallpaper grid with the same button under every picture pages to the end', async () => {
+  const { pg, ctx, errors } = await open('/walls?page=1');
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#walls > li.w').length), site.PER * site.LAST);
+  assert.doesNotMatch(await pg.evaluate(onwardText), /a page we already have/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a refresh hidden in page 2 does not navigate the tab', async () => {
   const { pg, ctx, errors } = await open('/metaref?page=1', () => { window.__alive = true; });
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');

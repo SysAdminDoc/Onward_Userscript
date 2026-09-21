@@ -420,6 +420,55 @@ test('repeats: layout filler is kept on every page and does not count', () => {
   assert.equal(O.splitRepeats([grid[1]], new Set()).repeatShare, 1, 'a page of nothing but filler has nothing new');
 });
 
+test('repeats: items that share their text and link on a page are told apart by their picture', () => {
+  const walls = (from) => [...dom(`<ul>${[0, 1, 2, 3, 4].map((i) => `<li><img src="/wall/${from + i}.jpg"><button>Download</button></li>`).join('')}</ul>`).querySelectorAll('li')];
+  const seen = new Set(O.pageKeys(walls(1)));
+  assert.equal(seen.size, 5);
+  const next = O.splitRepeats(walls(6), seen);
+  assert.equal(next.fresh.length, 5, 'a page of new wallpapers is new');
+  assert.equal(O.splitRepeats(walls(1), seen).repeatShare, 1, 'the same page again is still caught');
+  const photos = (from) => [...dom(`<ul>${[0, 1, 2].map((i) => `<li><a href="#"><img src="/photo/${from + i}.jpg"></a></li>`).join('')}</ul>`).querySelectorAll('li')];
+  assert.equal(O.splitRepeats(photos(4), new Set(O.pageKeys(photos(1)))).fresh.length, 3, 'pictures linked to #');
+});
+
+test('repeats: pictures kept in lazy srcsets, <picture>, noscript copies and backgrounds', () => {
+  // Each kind: the same page again is all repeats, a page of other pictures all new.
+  const check = (item, label) => {
+    const page = (from) => [...dom(`<ul>${[0, 1, 2].map((i) => item(from + i)).join('')}</ul>`).querySelectorAll('ul > li')];
+    const seen = new Set(O.pageKeys(page(1)));
+    assert.equal(seen.size, 3, label + ': three pictures');
+    assert.equal(O.splitRepeats(page(1), seen).repeatShare, 1, label + ': the same page again is caught');
+    assert.equal(O.splitRepeats(page(4), seen).fresh.length, 3, label + ': other pictures are new');
+  };
+  check((k) => `<li><img src="/blank.gif" data-lazy-srcset="/p/${k}.jpg 1x"></li>`, 'data-lazy-srcset');
+  check((k) => `<li><picture><source data-srcset="/p/${k}.webp"><img src="/blank.gif"></picture></li>`, 'a picture source');
+  check((k) => `<li><img src="/blank.gif"><noscript><img src="/p/${k}.jpg"></noscript></li>`, 'a noscript copy');
+  check((k) => `<li class="tile" style="background-image:url(/t/${k}.jpg)"></li>`, 'a background');
+  check((k) => `<li data-bg="/t/${k}.jpg"></li>`, 'data-bg');
+  // A picture that can't be told apart from the others is always new, never a repeat.
+  const blank = () => [...dom('<ul><li><img src="/blank.gif"></li><li><img src="/blank.gif"></li></ul>').querySelectorAll('li')];
+  const r = O.splitRepeats(blank(), new Set(O.pageKeys(blank())));
+  assert.deepEqual([r.fresh.length, r.repeatShare], [2, 0]);
+});
+
+test('repeats: a live page\'s <noscript> text is not part of an item', () => {
+  // With scripts on, a live page keeps <noscript> content as raw text; a fetched copy parses it.
+  const fetched = dom('<ul><li><a href="/p/1">One</a><noscript><img src="/p/1.jpg"></noscript></li></ul>').querySelector('li');
+  const live = dom('<ul><li><a href="/p/1">One</a></li></ul>').querySelector('li');
+  const ns = live.ownerDocument.createElement('noscript');
+  ns.textContent = '<img src="/p/1.jpg">';
+  live.appendChild(ns);
+  assert.equal(O.itemKey(live), O.itemKey(fetched));
+  // A picture-only item: on the live page its real address is only in that raw text.
+  const pic = (d) => d.querySelector('li');
+  const fetchedPic = pic(dom('<ul><li><img src="/blank.gif"><noscript><img src="/p/9.jpg"></noscript></li></ul>'));
+  const livePic = pic(dom('<ul><li><img src="/blank.gif"></li></ul>'));
+  const ns2 = livePic.ownerDocument.createElement('noscript');
+  ns2.textContent = '<img src="/p/9.jpg">';
+  livePic.appendChild(ns2);
+  assert.equal(O.itemKey(livePic), O.itemKey(fetchedPic));
+});
+
 test('repeats: a long first post on every page does not end paging', () => {
   const long = 'A long opening post that every page repeats. '.repeat(140); // about 6,300 characters
   const page = (start) => dom(`<ul><li class="post"><p>${long}</p></li>${items(4, 'post', start)}</ul>`).querySelectorAll('ul > li');

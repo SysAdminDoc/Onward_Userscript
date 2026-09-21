@@ -706,7 +706,7 @@
   }
 
   /** An image's own address: the lazy-load one first, since the site's loader
-   * may have swapped src on the live page but not in a fetched copy. */
+   * may have swapped src on the live page but not in a fetched copy. '' for a placeholder. */
   function imageUrl(img) {
     for (const a of LAZY_ATTRS) {
       const v = img.getAttribute(a);
@@ -714,51 +714,106 @@
     }
     const src = img.getAttribute('src');
     if (src && !PLACEHOLDER_RE.test(src)) return src;
-    return img.getAttribute('data-srcset') || img.getAttribute('srcset') || src || '';
+    const set = img.getAttribute('data-srcset') || img.getAttribute('data-lazy-srcset') || img.getAttribute('srcset');
+    if (set && !placeholderSet(set)) return set;
+    const pic = img.parentElement;
+    const source = pic && pic.tagName === 'PICTURE' ? pic.querySelector('source[data-srcset], source[srcset]') : null;
+    return source ? source.getAttribute('data-srcset') || source.getAttribute('srcset') : '';
   }
 
+  const BG_SEL = BG_ATTRS.map((a) => '[' + a + ']').join(',') + ',[style*="background-image"]';
+
+  /** The picture an item shows, wherever its loader keeps it: an image, a lazy background, a <noscript> copy. */
+  function pictureOf(el) {
+    for (const img of el.matches('img') ? [el] : el.querySelectorAll('img')) {
+      const u = imageUrl(img);
+      if (u) return u;
+    }
+    for (const b of el.matches(BG_SEL) ? [el] : el.querySelectorAll(BG_SEL)) {
+      const u = BG_ATTRS.map((a) => b.getAttribute(a)).find(Boolean) || (/url\(\s*["']?([^"')]+)/i.exec(b.getAttribute('style') || '') || [])[1];
+      if (u && !PLACEHOLDER_RE.test(u)) return u;
+    }
+    // A <noscript> copy: markup in a fetched page, raw text on the live one.
+    for (const ns of el.querySelectorAll('noscript')) {
+      const img = ns.querySelector('img[src]');
+      if (img) return img.getAttribute('src');
+      const m = /<img\b[^>]*?\ssrc\s*=\s*["']?([^"'\s>]+)/i.exec(ns.textContent || '');
+      if (m) return m[1];
+    }
+    return '';
+  }
+
+  /** An item's words, leaving out <noscript>, <script> and <style> (raw text on a live page, markup in a fetched one). */
+  function textOf(el) {
+    const walker = el.ownerDocument.createTreeWalker(el, 4 /* SHOW_TEXT */);
+    let out = '';
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const skip = n.parentElement && n.parentElement.closest('noscript, script, style');
+      if (!skip || !el.contains(skip)) out += n.data;
+    }
+    return normalize(out);
+  }
+
+  const MEDIA_SEL = 'img, picture, video, canvas, svg, iframe, object, embed';
+  let unkeyed = 0;
+
   /**
-   * One item's identity: its text and first link, or for a picture-only item
-   * its first image. Items with none of these (spacer rows, clearfix divs) are
-   * layout, not content: they get no key, so they are never taken for repeats.
-   * Read before prepareItems() rewrites URLs, so every page is keyed the same way.
+   * One item's identity: its text and first link, plus its picture when asked
+   * for (see pageKeys) or when it has neither. Items with no text, link or
+   * media (spacer rows, clearfix divs) are layout, not content: no key, never
+   * taken for repeats. A picture Onward can't identify is always new. Read
+   * before prepareItems() rewrites URLs, so every page is keyed the same way.
    */
-  function itemKey(el) {
-    const text = normalize(el.textContent);
+  function itemKey(el, withPicture) {
+    const text = textOf(el);
     const a = el.matches('a[href]') ? el : el.querySelector('a[href]');
     let s = text + '|' + (a ? a.getAttribute('href') : '');
-    if (!text && !a) {
-      const img = el.matches('img') ? el : el.querySelector('img');
-      const url = img && imageUrl(img);
-      if (!url) return null;
-      s += '|' + url;
+    if (withPicture || (!text && !a)) {
+      const pic = pictureOf(el);
+      if (pic) s += '|' + pic;
+      else if (!text && !a) return el.matches(MEDIA_SEL) || el.querySelector(MEDIA_SEL) ? 'unkeyed:' + (++unkeyed) : null;
     }
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
     return (h >>> 0).toString(36) + ':' + s.length;
   }
 
-  /** Items not seen on earlier pages, and the share of content items that were. Layout filler is always kept. */
+  /**
+   * Keys for one page's items. Items that share their text and link on the
+   * page (the same "Download" button under every wallpaper, a picture linked
+   * to "#") are told apart by their picture; others don't need it, so a
+   * resized copy of an image doesn't change them.
+   */
+  function pageKeys(items) {
+    const first = items.map((it) => itemKey(it, false));
+    const count = new Map();
+    for (const k of first) if (k !== null) count.set(k, (count.get(k) || 0) + 1);
+    return items.map((it, i) => (first[i] !== null && count.get(first[i]) > 1 ? itemKey(it, true) : first[i]));
+  }
+
+  /**
+   * Items not seen on earlier pages, their keys, and the share of content
+   * items that were seen. Layout filler is always kept and has no key.
+   */
   function splitRepeats(items, seenKeys) {
     let content = 0;
     let repeats = 0;
-    const fresh = items.filter((it) => {
-      const k = itemKey(it);
+    const keys = pageKeys(items);
+    const freshKeys = [];
+    const fresh = items.filter((it, i) => {
+      const k = keys[i];
       if (k === null) return true;
       content++;
-      if (!seenKeys.has(k)) return true;
+      if (!seenKeys.has(k)) { freshKeys.push(k); return true; }
       repeats++;
       return false;
     });
-    return { fresh, repeatShare: content ? repeats / content : 1 };
+    return { fresh, freshKeys, repeatShare: content ? repeats / content : 1 };
   }
 
   /** Remembers the keys of items now on screen. */
   function rememberItems(items, keys) {
-    for (const it of items) {
-      const k = itemKey(it);
-      if (k !== null) keys.add(k);
-    }
+    for (const k of pageKeys(items)) if (k !== null) keys.add(k);
   }
 
   // ---------------------------------------------------------------------------
@@ -1530,7 +1585,8 @@
         if (!items.length) throw new Error('no content found on the next page');
         // A page that is (nearly) all repeats is the site sending the same page
         // again; a few repeats (products that moved) are just dropped.
-        const { fresh, repeatShare } = splitRepeats(items, this.itemKeys);
+        // Keyed here, before prepareItems() rewrites their URLs, like every other page.
+        const { fresh, freshKeys, repeatShare } = splitRepeats(items, this.itemKeys);
         if (!fresh.length || repeatShare >= 0.9) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
         const prepared = prepareItems(fresh, finalUrl);
         const frag = document.createDocumentFragment();
@@ -1559,7 +1615,7 @@
         }
         release();
         // Only now is the page on screen: a failure before this stays retryable.
-        rememberItems(fresh, this.itemKeys);
+        for (const k of freshKeys) this.itemKeys.add(k);
         this.seen.add(stripHash(url));
         this.seen.add(stripHash(finalUrl));
         bar.first = this.lastInserted;
@@ -2199,6 +2255,6 @@
 
   return {
     VERSION, boot, hostListed, pathSkipped, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, itemKey, splitRepeats, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });
