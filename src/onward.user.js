@@ -573,10 +573,22 @@
   // Preparing fetched content
   // ---------------------------------------------------------------------------
 
-  const LAZY_ATTRS = ['data-src', 'data-original', 'data-lazy-src', 'data-lazy', 'data-url', 'data-echo', 'data-actualsrc', 'lazy-src', 'data-hi-res-src'];
-  const PLACEHOLDER_RE = /^data:|blank|placeholder|spacer|lazy|loading|grey|gray|transparent|1x1|pixel/i;
+  // Where lazy loaders keep the real address, full-size first (Pagetual's set
+  // and a few more). Used only when src is missing or a placeholder.
+  const LAZY_ATTRS = [
+    'data-src', 'data-original', 'data-lazy-src', 'data-lazyload', 'data-lazyload-src', 'data-lazy-load-src',
+    'data-ks-lazyload', 'data-ks-lazyload-custom', 'data-defer-src', 'data-actualsrc', 'data-orig-file',
+    'data-hi-res-src', 'zoomfile', 'file', 'original', 'data-lazy', 'data-echo', 'data-url', 'data-imageurl',
+    'data-isrc', 'data-s', 'lazy-src', 'lazysrc', 'load-src', 'origin-src', 'real_src', 'imgsrc', 'src2', '_src',
+    'data-cover', 'data-thumb', 'data-placeholder',
+  ];
+  const PLACEHOLDER_RE = /^data:|blank|placeholder|spacer|lazy|loading|grey|gray|transparent|1x1|pixel|(^|\/)none\.(gif|png)/i;
+  const BG_ATTRS = ['data-bg', 'data-background-image'];
 
-  function fixLazyImages(root) {
+  /** A srcset that only offers placeholders (data: URIs, blank.gif and the like). */
+  const placeholderSet = (set) => /^\s*data:/i.test(set) || set.split(',').every((part) => PLACEHOLDER_RE.test(part.trim().split(/\s+/)[0] || ''));
+
+  function fixLazyImages(root, base) {
     for (const img of root.querySelectorAll('img, source')) {
       const src = img.getAttribute('src') || '';
       for (const a of LAZY_ATTRS) {
@@ -584,7 +596,16 @@
         if (v && !/^data:/.test(v) && (!src || PLACEHOLDER_RE.test(src))) { img.setAttribute('src', v); break; }
       }
       const lazySet = img.getAttribute('data-srcset') || img.getAttribute('data-lazy-srcset');
-      if (lazySet && !img.getAttribute('srcset')) img.setAttribute('srcset', lazySet);
+      const set = img.getAttribute('srcset');
+      if (lazySet && (!set || placeholderSet(set))) img.setAttribute('srcset', lazySet);
+    }
+    // Lazy background images: <div data-bg="/cover.jpg">.
+    for (const el of root.querySelectorAll(BG_ATTRS.map((a) => '[' + a + ']').join(','))) {
+      if (el.style.backgroundImage && !/^url\(["']?data:/.test(el.style.backgroundImage)) continue;
+      const v = BG_ATTRS.map((a) => el.getAttribute(a)).find(Boolean).trim();
+      const inner = /^url\(/i.test(v) ? v.replace(/^url\(\s*["']?|["']?\s*\)$/gi, '') : v;
+      const u = base ? absUrl(inner, base) : inner;
+      if (u) el.style.backgroundImage = 'url("' + u.replace(/["\\]/g, '\\$&') + '")';
     }
   }
 
@@ -646,8 +667,8 @@
       if (it.matches(INERT_SEL)) continue;
       takeNoscriptImages(it);
       stripInert(it);
-      fixLazyImages(it);
-      if (it.matches('img, source')) fixLazyImages(it.parentElement || it);
+      fixLazyImages(it, base);
+      if (it.matches('img, source')) fixLazyImages(it.parentElement || it, base);
       absolutize(it, base);
       out.push(it);
     }

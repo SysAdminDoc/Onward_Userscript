@@ -169,6 +169,45 @@ test('prepareItems strips markup that would act on the page', () => {
   assert.equal(js.querySelector('button').hasAttribute('formaction'), false, 'javascript: formaction removed');
 });
 
+test('lazy images: the attributes lazy loaders use, one at a time', () => {
+  const fixed = (img) => {
+    const d = dom(`<div class="i">${img}</div>`);
+    const [it] = O.prepareItems([d.querySelector('.i')], 'https://example.com/list/');
+    return it.querySelector('img').getAttribute('src');
+  };
+  for (const attr of ['data-lazyload', 'data-lazyload-src', 'data-lazy-load-src', 'data-orig-file', 'data-ks-lazyload', 'data-ks-lazyload-custom',
+    'data-defer-src', 'lazysrc', 'load-src', 'origin-src', 'real_src', 'imgsrc', 'src2', 'data-imageurl', 'data-isrc', 'data-s', 'data-cover', 'data-thumb']) {
+    assert.equal(fixed(`<img src="/blank.gif" ${attr}="/real.jpg">`), 'https://example.com/real.jpg', attr);
+  }
+  // Discuz: a none.gif placeholder, the picture in zoomfile or file.
+  assert.equal(fixed('<img src="static/image/common/none.gif" zoomfile="data/attachment/a.jpg" file="data/attachment/a_small.jpg">'), 'https://example.com/list/data/attachment/a.jpg');
+  assert.equal(fixed('<img src="static/image/common/none.gif" file="data/attachment/b.jpg">'), 'https://example.com/list/data/attachment/b.jpg');
+  assert.equal(fixed('<img original="/o.jpg">'), 'https://example.com/o.jpg', 'no src at all');
+  assert.equal(fixed('<img _src="/u.jpg">'), 'https://example.com/u.jpg', '_src');
+  assert.equal(fixed('<img src="/photo.jpg" data-src="/other.jpg">'), 'https://example.com/photo.jpg', 'a real src is kept');
+  assert.equal(fixed('<img src="/blank.gif" data-placeholder="/tiny.jpg" data-src="/full.jpg">'), 'https://example.com/full.jpg', 'full size before a placeholder copy');
+});
+
+test('lazy images: a placeholder srcset gives way to data-srcset', () => {
+  const d = dom(`<div class="i"><img src="/blank.gif" srcset="data:image/gif;base64,R0lGOD 1w" data-srcset="/a.jpg 1x, /a@2x.jpg 2x">
+    <picture><source srcset="/spacer.gif" data-srcset="/b.webp"><img src="/b.jpg"></picture>
+    <img class="keep" src="/c.jpg" srcset="/c.jpg 1x, /c@2x.jpg 2x" data-srcset="/other.jpg 1x"></div>`);
+  const [it] = O.prepareItems([d.querySelector('.i')], 'https://example.com/');
+  assert.equal(it.querySelector('img').getAttribute('srcset'), 'https://example.com/a.jpg 1x, https://example.com/a@2x.jpg 2x');
+  assert.equal(it.querySelector('source').getAttribute('srcset'), 'https://example.com/b.webp');
+  assert.match(it.querySelector('img.keep').getAttribute('srcset'), /c@2x\.jpg/, 'a real srcset is kept');
+});
+
+test('lazy images: data-bg and data-background-image become a background image', () => {
+  const d = dom(`<div class="i"><div class="cover" data-bg="covers/1.jpg"></div>
+    <a class="thumb" data-background-image="url('/t/2.jpg')"></a>
+    <div class="set" style="background-image:url(/real.jpg)" data-bg="/other.jpg"></div></div>`);
+  const [it] = O.prepareItems([d.querySelector('.i')], 'https://example.com/list/');
+  assert.match(it.querySelector('.cover').style.backgroundImage, /^url\("?https:\/\/example\.com\/list\/covers\/1\.jpg"?\)$/);
+  assert.match(it.querySelector('.thumb').style.backgroundImage, /^url\("?https:\/\/example\.com\/t\/2\.jpg"?\)$/);
+  assert.match(it.querySelector('.set').style.backgroundImage, /real\.jpg/, 'a background already set is kept');
+});
+
 test('prepareItems takes an image URL from a sibling noscript, and drops inert top-level items', () => {
   const d = dom(`<div class="card"><img src="data:image/gif;base64,R0lGOD" class="lazy"><noscript><img src="/real.jpg" srcset="/real.jpg 1x, /real@2x.jpg 2x"></noscript></div>
     <div class="card"><img src="/placeholder.gif" data-src="/lazy.jpg"><noscript><img src="/fallback.jpg"></noscript></div>

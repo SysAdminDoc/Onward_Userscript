@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Fewer blank images on added pages. Onward now knows every attribute Pagetual reads for lazy images and a few more (`data-lazyload`, `data-orig-file`, `data-ks-lazyload`, `data-defer-src`, `lazysrc`, `_src`, Discuz's `zoomfile` and `file`, and others), prefers the full-size address, replaces a placeholder `srcset` with `data-srcset`, and turns `data-bg` and `data-background-image` into a real background image.
 - Onward stays off checkout, cart, sign-in, sign-up, account and password pages by default, since adding pages there can break the flow. The pattern is editable in Settings, and "Run Onward here anyway" still works. A new "Run on: only sites I list" setting keeps Onward off everywhere except the sites you name; the toggle command adds or removes the current site.
 - New menu command "Load 5 more pages" loads up to five pages one after another without scrolling, counting them in the loading bar. It keeps to the page limit and the gap between requests, and waits for a page that's already loading.
 - A single scroll no longer fetches a string of pages on sites whose images don't reserve their size. Onward waits for a new page's images before deciding the page still needs another, and a page it was about to fetch is dropped if you've scrolled away in the meantime. Pages you ask for from the menu are always loaded.
