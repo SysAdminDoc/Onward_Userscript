@@ -412,6 +412,18 @@ test('a live page\'s raw <noscript> picture keys like the fetched copy of it', (
   assert.equal(O.itemKey(hex, true), O.itemKey(fetched, true));
 });
 
+test('an unlabelled pager needs a run of page numbers; a number next to a link is data', () => {
+  // A stats table: 2 in bold, a link to 3 beside it.
+  const table = dom(`<ul>${items(5)}</ul><table><tr><td><b>2</b></td><td><a href="/stats/3">3</a></td><td>7.2</td></tr></table>`);
+  assert.equal(next(table), null);
+  // A bare pager with no class: 1 [2] 3 4.
+  const bare = dom(`<ul>${items(5)}</ul><div><a href="/list/?p=1">1</a> <b>2</b> <a href="/list/?p=3">3</a> <a href="/list/?p=4">4</a></div>`);
+  assert.equal(next(bare, 'https://example.com/list/?p=2').url, 'https://example.com/list/?p=3');
+  // Near the end, the run is behind the marker: 7 8 [9] 10.
+  const late = dom(`<ul>${items(5)}</ul><div><a href="/l/7">7</a><a href="/l/8">8</a><b>9</b><a href="/l/10">10</a></div>`);
+  assert.equal(next(late, 'https://example.com/l/9').url, 'https://example.com/l/10');
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },

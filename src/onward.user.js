@@ -518,14 +518,23 @@
         }
         continue;
       }
-      // Unlabelled pagers: the N+1 link has to sit right after the marker.
+      // Unlabelled pagers: the N+1 link sits right after the marker, in a run of
+      // consecutive numbers with at least two more links (a table cell holding 2
+      // next to a link to 3 is data, not a pager).
       const holder = m.tagName === 'A' ? m : m.closest('li, td') || m;
-      const sib = holder.nextElementSibling;
-      const a = sib && (sib.matches('a[href]') ? sib : sib.querySelector(':scope > a[href]'));
-      if (a && normalize(a.textContent) === String(n + 1)) {
-        const u = acceptUrl(a.getAttribute('href'));
-        if (u) return { url: u, el: a, score: 55, how: 'numbered' };
-      }
+      const numberAt = (el) => {
+        const a = el && (el.matches('a[href]') ? el : el.querySelector(':scope > a[href]'));
+        const t = a && normalize(a.textContent);
+        return t && /^\d{1,5}$/.test(t) ? { a, n: Number(t) } : null;
+      };
+      const after = numberAt(holder.nextElementSibling);
+      if (!after || after.n !== n + 1) continue;
+      let more = 0;
+      for (let s = holder.nextElementSibling.nextElementSibling, k = n + 2; s && (numberAt(s) || {}).n === k; s = s.nextElementSibling, k++) more++;
+      for (let s = holder.previousElementSibling, k = n - 1; s && (numberAt(s) || {}).n === k; s = s.previousElementSibling, k--) more++;
+      if (more < 2) continue;
+      const u = acceptUrl(after.a.getAttribute('href'));
+      if (u) return { url: u, el: after.a, score: 55, how: 'numbered' };
     }
     return null;
   }
