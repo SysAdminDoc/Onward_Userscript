@@ -27,7 +27,7 @@ The script updates itself from this repo.
 - **Stays out of the way on sites that already scroll forever.** Discourse and Flarum forums are left alone. On other sites Onward watches for a few seconds before its first page and whenever you reach the bottom. If the site adds items by itself, Onward takes its own pages back out and stands by.
 - **Is polite to servers.** At most 40 pages per visit by default. A failed request pauses loading until you click Retry. If added pages don't make the page any longer, it stops rather than loading forever.
 
-Each added page gets a slim bar with the page number, its URL, and buttons to jump to the top or stop. As you scroll, the address bar follows the page you're reading, so refreshing or sharing the link lands in the right place.
+Each added page gets a slim bar with the page number, its URL, and buttons to jump to the top or stop. Once stopped, the bars offer Resume instead. As you scroll, the address bar follows the page you're reading, so refreshing or sharing the link lands in the right place.
 
 ## Menu commands
 
@@ -36,7 +36,7 @@ Open your userscript manager's menu on any page:
 | Command | What it does |
 | --- | --- |
 | Toggle Onward on this site | Turns it off or back on for the current host. |
-| Load next page now | Loads the next page without scrolling. Also resumes after a failure. |
+| Load next page now | Loads the next page without scrolling. It also resumes after you pressed Stop or after a failure, and tells you when the last page has been reached. |
 | Run Onward here anyway | Starts Onward on a page where it stood by because the site seemed to load more by itself. |
 | Pick next link and content… | Click the "Next" link, then click one result. Onward saves a rule for the site and restarts. |
 | Settings | Opens the settings panel. |

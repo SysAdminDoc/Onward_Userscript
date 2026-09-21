@@ -879,10 +879,40 @@
 
     // Stopping ends loading; the scroll listener stays so the address bar keeps
     // following the page in view. destroy() removes everything.
-    stop(reason, kind) {
+    // why: 'end' (no more pages), 'limit', 'error' or 'user'.
+    stop(reason, kind, why) {
       this.stopped = true;
+      this.endReason = why || (kind === 'err' ? 'error' : 'end');
+      if (this.userStopped && why !== 'user') {
+        // The real end (or an error) arrived after a Stop; there's nothing to resume.
+        this.userStopped = false;
+        if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
+      }
       if (reason) this.addBar(null, reason, kind || 'end');
+      this.refreshBars();
       setTimeout(this.onScroll, 0);
+    }
+
+    userStop() {
+      if (this.stopped) return;
+      this.userStopped = true;
+      this.stop(null, 'end', 'user');
+      this.stopBar = this.addBar(null, 'Stopped by you.', 'end', () => this.resume(), 'Resume');
+    }
+
+    resume() {
+      if (!this.userStopped || this.destroyed) return;
+      this.userStopped = false;
+      this.stopped = false;
+      this.endReason = null;
+      if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
+      this.refreshBars();
+      this.onScroll();
+    }
+
+    /** Page bars show Stop or Resume depending on state; redraw them after a change. */
+    refreshBars() {
+      for (const sep of this.separators) if (sep.kind === '') this.setBar(sep, sep.url, sep.label, '');
     }
 
     metrics() {
@@ -1041,7 +1071,7 @@
 
     async loadNext() {
       if (this.busy || this.stopped) return;
-      if (this.page >= this.s.maxPages) return this.stop(`Stopped after ${this.s.maxPages} pages (change the limit in settings).`);
+      if (this.page >= this.s.maxPages) return this.stop(`Stopped after ${this.s.maxPages} pages (change the limit in settings).`, 'end', 'limit');
       this.busy = true;
       this.paused = false;
       const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + '…', 'loading');
@@ -1179,7 +1209,7 @@
       win.dispatchEvent(new CustomEvent('onward:page', { detail: { page: this.page, url } }));
     }
 
-    addBar(url, label, kind, onRetry) {
+    addBar(url, label, kind, onRetry, actionLabel) {
       // li/tr can't host a shadow root, so the bar lives in a div inside a
       // wrapper that is valid for the list it sits in.
       const tag = barTag(this.anchor ? this.anchor.parentNode : null);
@@ -1199,7 +1229,7 @@
       mount.appendChild(host);
       const sep = { outer, host, sr, url, display: outer.style.display, bar: h('div', { class: 'bar' }) };
       sr.appendChild(sep.bar);
-      this.setBar(sep, url, label, kind, onRetry);
+      this.setBar(sep, url, label, kind, onRetry, actionLabel);
       // Load-more sites append their own items after our anchor, so status bars go last.
       if (this.anchor && this.anchor.parentNode) this.anchor.parentNode.insertBefore(outer, this.buttonMode ? null : this.anchor);
       else document.body.appendChild(outer);
@@ -1212,17 +1242,19 @@
       this.separators = this.separators.filter((s) => s !== sep);
     }
 
-    setBar(sep, url, label, kind, onRetry) {
+    setBar(sep, url, label, kind, onRetry, actionLabel) {
       sep.url = url;
+      sep.label = label;
       sep.kind = kind || '';
       sep.bar.className = 'bar ' + (kind || '');
       sep.bar.replaceChildren(...[
         kind === 'loading' ? h('span', { class: 'spin' }) : null,
         h('b', {}, label),
         url && kind !== 'loading' ? h('a', { class: 'url', href: url, title: url }, url) : h('span', { class: 'url' }),
-        onRetry ? h('button', { onclick: onRetry }, 'Retry') : null,
+        onRetry ? h('button', { onclick: onRetry }, actionLabel || 'Retry') : null,
         kind === '' ? h('button', { title: 'Scroll to top', onclick: () => (this.scroller || win).scrollTo({ top: 0, behavior: 'smooth' }) }, '↑ Top') : null,
-        kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.stop('Stopped.') }, 'Stop') : null,
+        kind === '' && this.userStopped ? h('button', { title: 'Carry on loading pages', onclick: () => this.resume() }, 'Resume') : null,
+        kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.userStop() }, 'Stop') : null,
       ].filter(Boolean));
       // A hidden page bar keeps its (now zero-height) wrapper in the layout,
       // so the address bar can still tell which page is in view.
@@ -1569,8 +1601,18 @@
         else { list.push(location.hostname); store.set('disabledHosts', list); if (app.pager) app.pager.destroy(); app.pager = null; toast('Disabled on ' + location.hostname); }
       });
       GM_registerMenuCommand('Load next page now', () => {
-        if (app.pager && !app.pager.stopped) app.pager.loadNext();
-        else toast(app.status === 'active' ? 'No more pages.' : 'Nothing to load: ' + app.status, 'err');
+        const p = app.pager;
+        if (!p) return toast('Nothing to load: ' + app.status, 'err');
+        if (p.userStopped) {
+          toast('Resuming. Paging was stopped by you.', 'ok');
+          p.resume();
+        } else if (p.paused) {
+          toast('Trying again. Paging was paused after an error.', 'ok');
+        } else if (p.stopped) {
+          const why = { limit: 'Stopped at the page limit. You can raise it in Settings.', error: 'Stopped after repeated errors.' };
+          return toast(why[p.endReason] || 'Last page reached.', 'err');
+        }
+        p.loadNext();
       });
       GM_registerMenuCommand('Run Onward here anyway', () => {
         toast('Running on this page.', 'ok');

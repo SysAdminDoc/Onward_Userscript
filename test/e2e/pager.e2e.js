@@ -520,6 +520,48 @@ test('a reader parked in the footer gets one page per scroll, not a burst', asyn
   await ctx.close();
 });
 
+const onwardText = () => Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' | ');
+
+test('Stop becomes Resume, and the menu tells stopped, paused and finished apart', async () => {
+  const { pg, ctx, errors } = await open('/long?page=1');
+  const posts = () => pg.evaluate(() => document.querySelectorAll('#list > li.post').length);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 10), 'page 2 is in');
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  const stoppedAt = await posts();
+  for (let i = 0; i < 6; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await posts(), stoppedAt, 'nothing loads after Stop');
+  assert.match(await pg.evaluate(onwardText), /Stopped by you/);
+  assert.ok(await pg.getByRole('button', { name: 'Resume', exact: true }).count() >= 1, 'Stop turned into Resume');
+  assert.equal(await pg.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+  // The menu resumes a pager the user stopped.
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForTimeout(800);
+  assert.ok(await posts() > stoppedAt, 'the menu resumed paging');
+  assert.match(await pg.evaluate(onwardText), /stopped by you/);
+  // Stop again and Resume from the bar this time.
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  await pg.getByRole('button', { name: 'Resume', exact: true }).first().click();
+  assert.ok(await scrollToEnd(pg, endBar, 80), 'Resume carried on to the end');
+  assert.equal(await posts(), 10 * site.PER);
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForTimeout(300);
+  assert.match(await pg.evaluate(onwardText), /Last page reached/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('the menu says when paging was paused after an error', async () => {
+  const { pg, ctx } = await open('/flaky?page=1');
+  assert.ok(await scrollToEnd(pg, () => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /Paused/.test(w.shadowRoot?.textContent || ''))), 'a page failed');
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForTimeout(300);
+  assert.match(await pg.evaluate(onwardText), /paused after an error/);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
