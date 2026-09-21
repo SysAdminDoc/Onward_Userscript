@@ -95,10 +95,11 @@ npm test          # detection unit tests (jsdom)
 npm run e2e       # the real script in headless Chromium against a local fixture site
 npm run check     # syntax check and version consistency
 npm run screenshots
-npm run smoke -- https://news.ycombinator.com/news
+npm run smoke     # real sites from scripts/smoke-sites.json, checked against what Onward should do there
+npm run smoke -- https://news.ycombinator.com/news   # or just report on any page
 ```
 
-`npm run e2e` needs Playwright's Chromium (`npx playwright install chromium` if it isn't there). The fixture site in `test/e2e/site.js` covers a paginated blog, a windows-1252 forum table, a script-rendered grid, a list that redraws itself, a failing server, an inner scroll container and a load-more button.
+`npm run e2e` needs Playwright's Chromium (`npx playwright install chromium` if it isn't there). `npm run smoke` loads at most three pages per site and fails only when Onward does something other than expected. A site that shows the headless browser a bot check, or refuses its requests, is reported as not checked, and Google and Bing are on the list as things to check by hand. The fixture site in `test/e2e/site.js` covers a paginated blog, a windows-1252 forum table, a script-rendered grid, a list that redraws itself, a failing server, an inner scroll container and a load-more button.
 
 The script is one file on purpose. It's wrapped in a small factory so the same code runs in the userscript manager and in Node tests without a build step.
 

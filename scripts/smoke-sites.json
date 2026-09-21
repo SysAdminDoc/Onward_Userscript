@@ -1,0 +1,9 @@
+[
+  { "name": "Hacker News", "family": "news", "url": "https://news.ycombinator.com/news", "expect": "active", "minPages": 2 },
+  { "name": "GitHub repository search", "family": "search", "url": "https://github.com/search?q=userscript&type=repositories", "expect": "active", "minPages": 2 },
+  { "name": "Discourse (Meta)", "family": "forum", "url": "https://meta.discourse.org/latest", "expect": "inactive" },
+  { "name": "phpBB", "family": "forum", "url": "https://www.phpbb.com/community/viewforum.php?f=46", "expect": "active", "minPages": 2 },
+  { "name": "XenForo", "family": "forum", "url": "https://xenforo.com/community/forums/xenforo-questions-and-support.25/", "expect": "active", "minPages": 2 },
+  { "name": "Google", "family": "search", "url": "https://www.google.com/search?q=onward+userscript", "manual": "Google challenges headless browsers. In a real profile, search anything and check that page 2 of the results appears below page 1." },
+  { "name": "Bing", "family": "search", "url": "https://www.bing.com/search?q=onward+userscript", "manual": "Bing challenges headless browsers. In a real profile, search anything and check that the next results page appears below the first." }
+]
