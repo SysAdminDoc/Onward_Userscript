@@ -1079,6 +1079,8 @@
     userStop() {
       if (this.stopped) return;
       this.userStopped = true;
+      // A page on its way is dropped rather than landing under the Stop bar.
+      if (this.loadCtl) this.loadCtl.abort();
       this.stop(null, 'end', 'user');
       this.stopBar = this.addBar(null, 'Stopped by you.', 'end', () => this.resume(), 'Resume');
     }
@@ -1088,7 +1090,10 @@
       this.userStopped = false;
       this.stopped = false;
       this.endReason = null;
+      // Resume means carry on, past a failed page too.
+      this.paused = false;
       if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
+      if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
       this.refreshBars();
       this.onScroll();
     }
@@ -1238,6 +1243,7 @@
         console.info(TAG, 'the site redrew its list; switching to wrapped pages');
         this.opts.onLost();
       } else {
+        this.endReason = 'lost';
         this.addBar(null, 'This site keeps redrawing its list, so pages can’t be added here.', 'err');
       }
     }
@@ -1335,27 +1341,37 @@
       if (this.page >= this.s.maxPages) return this.stop(`Stopped after ${this.s.maxPages} pages (change the limit in settings).`, 'end', 'limit');
       this.busy = true;
       this.paused = false;
+      if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
       const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + '…', 'loading');
+      // Stop cancels this load; so does destroy().
+      const ctl = new AbortController();
+      const cancel = () => ctl.abort();
+      this.abort.signal.addEventListener('abort', cancel);
+      this.loadCtl = ctl;
       try {
         // Space requests out, however they were triggered (scroll, chain, menu, click).
         const wait = (this.lastRequestAt || 0) + this.s.spacing - Date.now();
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         if (this.destroyed) return;
+        if (ctl.signal.aborted) throw new Error('stopped');
         this.lastRequestAt = Date.now();
+        // A load-more click can't be taken back, but that mode has no page bars, so no Stop either.
         if (this.buttonMode) await this.clickMore(loading);
-        else await this.appendPage(this.next.url, loading);
+        else await this.appendPage(this.next.url, loading, ctl.signal);
         if (this.destroyed) return;
         this.failures = 0;
       } catch (e) {
         if (this.destroyed) return;
+        this.removeBar(loading);
+        if (ctl.signal.aborted) { this.busy = false; return; }
         this.failures++;
         console.warn(TAG, e);
-        this.removeBar(loading);
         if (this.failures >= 3) this.stop('Could not load the next page: ' + e.message, 'err');
         else {
-          const retry = this.addBar(this.next && this.next.url, 'Page ' + (this.page + 1) + ' failed (' + e.message + '). Paused.', 'err', () => {
-            this.removeBar(retry);
+          this.retryBar = this.addBar(this.next && this.next.url, 'Page ' + (this.page + 1) + ' failed (' + e.message + '). Paused.', 'err', () => {
             this.paused = false;
+            // Retry means carry on, after a Stop too.
+            if (this.userStopped) this.resume();
             this.loadNext();
           });
           // Don't hammer a server that's failing or rate limiting; wait for a click.
@@ -1363,16 +1379,19 @@
           this.busy = false;
           return;
         }
+      } finally {
+        this.abort.signal.removeEventListener('abort', cancel);
+        if (this.loadCtl === ctl) this.loadCtl = null;
       }
       this.busy = false;
       if (!this.stopped) setTimeout(this.onScroll, 400); // keep filling short pages, gently
     }
 
-    async appendPage(url, bar) {
+    async appendPage(url, bar, signal) {
       let doc;
       let dispose = () => {};
       let finalUrl = url;
-      const signal = this.abort.signal;
+      signal = signal || this.abort.signal;
       if (this.mode === 'iframe') {
         ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
         try { if (/^https?:/.test(doc.location.href)) finalUrl = doc.location.href; } catch (e) { /* keep the requested URL */ }
@@ -1391,6 +1410,12 @@
       }
       try {
         if (this.destroyed) return;
+        if (signal.aborted) throw new Error('stopped');
+        // The site threw our place in the list away before this page arrived.
+        if (this.lost()) {
+          this.removeBar(bar);
+          return this.handleLost();
+        }
         // A redirect back to a page already on screen (/page/99 -> /page/1) is the real end.
         if (this.seen.has(stripHash(finalUrl))) {
           this.removeBar(bar);
@@ -1441,7 +1466,7 @@
         setTimeout(() => { if (!this.destroyed && this.lost()) this.handleLost(); }, 1500);
         // Guard against loading forever when added pages don't make the page longer.
         this.noGrowth = this.metrics().height > heightBefore ? 0 : this.noGrowth + 1;
-        if (this.noGrowth >= 2) return this.stop('Pages were added but the page isn’t getting longer, so Onward stopped.', 'err');
+        if (this.noGrowth >= 2) return this.stop('Pages were added but the page isn’t getting longer, so Onward stopped.', 'err', 'nogrowth');
         if (next) this.next = next;
         else this.stop('No more pages.');
       } finally {
@@ -1757,15 +1782,18 @@
    * page), pinned by position when a pager repeats above and below the list,
    * and :nth-child steps only as a last resort (they shift between pages).
    */
+  const XPATH_SPACES = '\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff';
+
   function uniqueSelector(el) {
     const doc = el.ownerDocument;
     const only = (sel) => { const m = queryAll(doc, sel); return m.length === 1 && m[0] === el; };
     const tag = el.tagName.toLowerCase();
     const candidates = [cssPath(el)];
     const tests = [];
-    // JS \s folds a no-break space into a space; XPath's normalize-space() does not, so translate it first.
+    // JS \s folds no-break, thin, ideographic and other spaces into a space;
+    // XPath's normalize-space() only knows ASCII ones, so translate the rest first.
     const text = (el.textContent || '').replace(/\s+/g, ' ').trim();
-    if (text && text.length <= 60) tests.push("normalize-space(translate(., '\u00a0', ' '))=" + xpathString(text));
+    if (text && text.length <= 60) tests.push("normalize-space(translate(., '" + XPATH_SPACES + "', '" + ' '.repeat(XPATH_SPACES.length) + "'))=" + xpathString(text));
     for (const a of ['aria-label', 'title', 'value']) {
       const v = el.getAttribute(a);
       if (v) tests.push('@' + a + '=' + xpathString(v));
@@ -1980,7 +2008,12 @@
         } else if (p.paused) {
           toast('Trying again. Paging was paused after an error.', 'ok');
         } else if (p.stopped) {
-          const why = { limit: 'Stopped at the page limit. You can raise it in Settings.', error: 'Stopped after repeated errors.' };
+          const why = {
+            limit: 'Stopped at the page limit. You can raise it in Settings.',
+            error: 'Stopped after repeated errors.',
+            nogrowth: 'Stopped because added pages weren’t making the page any longer.',
+            lost: 'Stopped because this site keeps redrawing its list.',
+          };
           return toast(why[p.endReason] || 'Last page reached.', 'err');
         }
         p.loadNext();

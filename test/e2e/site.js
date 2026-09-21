@@ -232,11 +232,33 @@ function route(url) {
         document.querySelector('#app ul.posts').innerHTML = ${filtered};
       };</script>`) };
   }
-  if (u.pathname === '/emptyonce') {
-    // Page 2 comes back empty the first time only.
-    hits.emptyonce[n] = (hits.emptyonce[n] || 0) + 1;
-    const list = n === 2 && hits.emptyonce[n] === 1 ? '' : posts(n);
-    return { body: page('Empty once ' + n, `<ul class="posts">${list}</ul>${pager('/emptyonce?page=', n, 'Next')}`) };
+  if (u.pathname === '/emptyonce' || u.pathname.startsWith('/emptyonce3')) {
+    // Page 2 (page 3 on /emptyonce3 and /emptyonce3r) comes back empty the first time only, counted per path.
+    const key = u.pathname + n;
+    hits.emptyonce[key] = (hits.emptyonce[key] || 0) + 1;
+    const failing = u.pathname.startsWith('/emptyonce3') ? 3 : 2;
+    const list = n === failing && hits.emptyonce[key] === 1 ? '' : posts(n);
+    return { body: page('Empty once ' + n, `<ul class="posts">${list}</ul>${pager(u.pathname + '?page=', n, 'Next')}`) };
+  }
+  if (u.pathname === '/fixedh') {
+    // The list box has a fixed height, so added pages never make the page longer.
+    return { body: page('Fixedh ' + n, `<ul class="posts" style="height:700px;overflow:hidden;margin:0">${posts(n)}</ul>${pager('/fixedh?page=', n, 'Next')}`) };
+  }
+  if (u.pathname === '/redrawall') {
+    // A framework that owns its whole root: anything added inside it, even a comment next to the list, is thrown away.
+    return { body: page('Redrawall ' + n, `<main><div id="app"><ul class="posts">${posts(n)}</ul></div>${pager('/redrawall?page=', n, 'Next')}</main>
+      <script>const app = document.getElementById('app'); const html = app.innerHTML;
+        new MutationObserver(() => { if (app.innerHTML !== html) setTimeout(() => { if (app.innerHTML !== html) app.innerHTML = html; }, 50); })
+          .observe(app, { childList: true, subtree: true });</script>`) };
+  }
+  if (u.pathname === '/bs3') {
+    // /bs2 with a French label whose space is a narrow no-break space (U+202F).
+    const last = 6;
+    const item = (label, href, extra = '') => `<li class="page-item${extra}"><a class="page-link" href="${href}">${label}</a></li>`;
+    const nums = [];
+    for (let k = Math.max(1, n - 1); k <= Math.min(last, n + 2); k++) nums.push(item(String(k), `/bs3?page=${k}`, k === n ? ' active' : ''));
+    const nav = `<nav id="pager"><ul class="pagination">${n > 1 ? item('Précédent', `/bs3?page=${n - 1}`) : ''}${nums.join('')}${n < last ? item('Suivant&#8239;»', `/bs3?page=${n + 1}`) : ''}</ul></nav>`;
+    return { body: page('BS3 ' + n, `<main>${nav}<ul class="posts">${posts(n)}</ul>${nav}</main>`) };
   }
   if (u.pathname === '/latepager') {
     // Items in the HTML, but page 1 draws its pager a second after load.

@@ -583,6 +583,19 @@ test('picking the lower of two pagers (shared id, sliding numbers, &nbsp;) pages
   await ctx.close();
 });
 
+test('picking a Next label with a narrow no-break space saves a text selector', async () => {
+  const { pg, ctx, errors } = await open('/bs3?page=1');
+  const rule = await pick(pg, pg.locator('nav a.page-link', { hasText: /^Suivant/ }).last(), pg.locator('li.post p').first());
+  assert.ok(rule, 'a rule was saved');
+  assert.match(rule.next, /translate/, 'by its label: ' + rule.next);
+  assert.equal(await pg.evaluate(matchCount, rule.next), 1);
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: 6 * site.PER }, (_, i) => 'Post ' + (i + 1)), 'every page, in order');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a picked list rule still works when page 1 has an extra list of the same class', async () => {
   const { pg, ctx, errors } = await open('/featured?page=1');
   const rule = await pick(pg, pg.locator('.pagination a.next'), pg.locator('div.list:not(.featured) div.item p').first());
@@ -841,6 +854,7 @@ test('Retry after a failed page loads it, instead of ending paging', async () =>
   assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
   assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
   assert.doesNotMatch(await pg.evaluate(onwardText), /No more pages\.[^]*Page 3/, 'did not end early');
+  assert.doesNotMatch(await pg.evaluate(onwardText), /failed/, 'the failure bar went away');
   assert.deepEqual(errors, []);
   await ctx.close();
 });
@@ -854,6 +868,79 @@ test('in iframe mode a page that never answers times out, and Retry tries it aga
   const text = await pg.evaluate(onwardText);
   assert.doesNotMatch(text, /No more pages/, 'the retry did not end paging');
   assert.match(text, /Loading page 2/, 'it is trying page 2 again');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+const barText = () => Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' | ');
+const postCount = () => document.querySelectorAll('ul.posts > li.post').length;
+
+test('Retry after a Stop carries on paging', async () => {
+  const { pg, ctx, errors } = await open('/emptyonce3?page=1', () => { window.__gm = { mode: 'fetch' }; });
+  assert.ok(await scrollToEnd(pg, () => /Page 3 failed/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 40), 'page 3 failed once');
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  assert.match(await pg.evaluate(barText), /Stopped by you/);
+  await pg.getByRole('button', { name: 'Retry', exact: true }).click();
+  assert.ok(await scrollToEnd(pg, endBar, 40), 'paged to the end');
+  assert.equal(await pg.evaluate(postCount), site.PER * site.LAST);
+  assert.doesNotMatch(await pg.evaluate(barText), /Stopped by you|failed/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Resume after a failed page and a Stop tries the page again', async () => {
+  // A low threshold, so the top of two pages is far enough from the end that nothing loads there.
+  const { pg, ctx, errors } = await open('/emptyonce3r?page=1', () => { window.__gm = { mode: 'fetch', threshold: 0.3 }; });
+  assert.ok(await scrollToEnd(pg, () => /Page 3 failed/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 40), 'page 3 failed once');
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  // Resume at the top of the page, where nothing needs loading yet.
+  await pg.evaluate(() => window.scrollTo(0, 0));
+  await pg.waitForTimeout(300);
+  await pg.evaluate(() => {
+    const stopBar = Array.from(document.querySelectorAll('[data-onward]')).find((w) => /Stopped by you/.test(w.shadowRoot?.textContent || ''));
+    Array.from(stopBar.shadowRoot.querySelectorAll('button')).find((b) => b.textContent === 'Resume').click();
+  });
+  await pg.waitForTimeout(1000);
+  assert.equal(await pg.evaluate(postCount), 2 * site.PER, 'nothing loaded at the top');
+  assert.doesNotMatch(await pg.evaluate(barText), /failed|Stopped by you/, 'the old failure bar went with the pause');
+  assert.ok(await scrollToEnd(pg, endBar, 40), 'paged to the end');
+  assert.equal(await pg.evaluate(postCount), site.PER * site.LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Stop drops a page that is still on its way', async () => {
+  const { pg, ctx, errors } = await open('/slow?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length === 10 && /Loading page 3/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 60), 'page 3 on its way');
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  await pg.waitForTimeout(3000); // past the 2 s the slow page takes
+  assert.equal(await pg.evaluate(postCount), 10, 'page 3 never landed');
+  const text = await pg.evaluate(barText);
+  assert.doesNotMatch(text, /Loading|failed/, 'dropped quietly, not as a failure');
+  assert.match(text, /Stopped by you/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('the menu names a stop for pages that don\'t make the page longer', async () => {
+  const { pg, ctx, errors } = await open('/fixedh?page=1');
+  assert.ok(await scrollToEnd(pg, () => /getting longer/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 40));
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  const text = await pg.evaluate(barText);
+  assert.match(text, /weren’t making the page any longer/);
+  assert.doesNotMatch(text, /repeated errors/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a site that throws away every page Onward adds is told apart, in the bar and the menu', async () => {
+  const { pg, ctx, errors } = await open('/redrawall?page=1');
+  assert.ok(await scrollToEnd(pg, () => /keeps redrawing/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 60));
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  const text = await pg.evaluate(barText);
+  assert.match(text, /Stopped because this site keeps redrawing its list/);
+  assert.doesNotMatch(text, /failed|Last page reached/);
+  assert.equal(await pg.evaluate(postCount), site.PER, 'the site\'s own list, untouched');
   assert.deepEqual(errors, []);
   await ctx.close();
 });
