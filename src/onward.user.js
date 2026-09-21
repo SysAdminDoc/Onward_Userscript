@@ -1737,7 +1737,14 @@
         const wait = (this.lastRequestAt || 0) + this.s.spacing - Date.now();
         this.waitingTurn = true;
         this.asked = false;
-        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        // Stop ends the wait at once, so a Resume or a menu load right after starts
+        // afresh instead of being handed to this load, which is cancelled.
+        if (wait > 0) {
+          await new Promise((r) => {
+            const t = setTimeout(r, wait);
+            ctl.signal.addEventListener('abort', () => { clearTimeout(t); r(); }, { once: true });
+          });
+        }
         this.waitingTurn = false;
         if (this.destroyed) return;
         if (ctl.signal.aborted) throw new Error('stopped');

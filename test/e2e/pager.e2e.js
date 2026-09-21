@@ -2174,6 +2174,26 @@ test('"Load 5 more pages" after a Stop at the end of the list loads 5 pages, not
   await ctx.close();
 });
 
+for (const how of ['Resume', 'the menu']) {
+  test(`after a Stop while a scroll load waits its turn, ${how} loads the next page`, async () => {
+    const { pg, ctx, errors } = await open('/blog?page=1', () => { window.__gm = { spacing: 3000, threshold: 0.3 }; });
+    const posts = () => document.querySelectorAll('ul.posts > li.post').length;
+    await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+    await pg.evaluate(() => { window.__menu['Load next page now'](); });
+    await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 10);
+    await pg.evaluate(() => window.scrollTo(0, document.querySelector('ul.posts').getBoundingClientRect().bottom + scrollY - innerHeight + 50));
+    await pg.waitForFunction(() => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /Loading page 3/.test(w.shadowRoot?.textContent || '')));
+    await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+    if (how === 'Resume') await pg.getByRole('button', { name: 'Resume', exact: true }).last().click();
+    await pg.evaluate(() => window.scrollTo(0, 0));
+    if (how !== 'Resume') await pg.evaluate(() => { window.__menu['Load next page now'](); });
+    await pg.waitForTimeout(4500);
+    assert.equal(await pg.evaluate(posts), 15, 'page 3');
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
