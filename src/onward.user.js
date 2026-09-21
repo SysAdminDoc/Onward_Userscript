@@ -87,6 +87,27 @@
     try { return new RegExp(pattern, 'i').test(path); } catch (e) { return false; }
   }
 
+  /**
+   * What toggling Onward on this host does: its new state, and both host lists.
+   * Off takes the host off "Sites to run on" where it's listed by name, and
+   * turns it off outright where it's still covered (every site, or a parent
+   * domain on the list). On undoes that, listing the host when nothing covers it.
+   */
+  function toggleLists(s, host) {
+    const listed = s.runOn === 'listed';
+    const covered = (list) => !listed || hostListed(list, host);
+    let allow = s.allowHosts.slice();
+    let off = s.disabledHosts.filter((h) => h !== host);
+    const wasOn = !s.disabledHosts.includes(host) && covered(allow);
+    if (wasOn) {
+      if (listed) allow = allow.filter((h) => h !== host);
+      if (covered(allow)) off = off.concat(host);
+    } else if (!covered(allow)) {
+      allow = allow.concat(host);
+    }
+    return { on: !wasOn, allowHosts: allow, disabledHosts: off };
+  }
+
   /** The page at href is one Onward stays off: its path, or a single-page app's #/route, matches the pattern. */
   function pageSkipped(pattern, href) {
     let x;
@@ -1969,6 +1990,7 @@
     const modeSel = h('select', { 'data-k': 'mode' }, ...['auto', 'fetch', 'iframe'].map((m) => { const o = h('option', { value: m }, m); o.selected = s.mode === m; return o; }));
     const runOnSel = h('select', { 'data-k': 'runOn' }, ...[['all', 'every site'], ['listed', 'only sites I list']].map(([v, t]) => { const o = h('option', { value: v }, t); o.selected = s.runOn === v; return o; }));
     const allow = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Sites to run on' }); allow.value = s.allowHosts.join('\n');
+    const offHosts = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Turned off on these sites' }); offHosts.value = s.disabledHosts.join('\n');
     const skip = h('input', { type: 'text', spellcheck: 'false', value: s.skipPaths, 'data-k': 'skipPaths', 'aria-label': 'Stay off pages whose path matches', style: 'width:100%;margin-top:6px;font-family:ui-monospace,Consolas,monospace;font-size:12px' });
     const rules = h('textarea', { spellcheck: 'false', 'aria-label': 'Site rules (JSON)' }); rules.value = JSON.stringify(s.rules, null, 2);
     const excl = h('textarea', { spellcheck: 'false', 'aria-label': 'Never run on these hosts' }); excl.value = s.exclude.join('\n');
@@ -1999,6 +2021,7 @@
       }
       store.set('rules', normalized);
       store.set('exclude', excl.value.split(/\s+/).filter(Boolean));
+      store.set('disabledHosts', offHosts.value.split(/\s+/).filter(Boolean));
       store.set('allowHosts', allow.value.split(/\s+/).filter(Boolean));
       store.set('sources', srcs.value.split(/\s+/).filter(Boolean));
       close();
@@ -2015,6 +2038,7 @@
       h('label', {}, 'Loading mode', modeSel),
       h('label', {}, 'Run on', runOnSel),
       h('div', { class: 'blk' }, 'Sites to run on, one per line (with “only sites I list”)', allow),
+      h('div', { class: 'blk' }, 'Turned off on these sites, one per line (the toggle command adds them)', offHosts),
       h('div', { class: 'blk' }, 'Stay off pages whose path matches', skip,
         h('div', { class: 'hint' }, 'A regular expression. Leave it empty to run on every page.')),
       h('div', { class: 'blk' }, 'Site rules (JSON)', rules,
@@ -2635,21 +2659,16 @@
     if (typeof GM_registerMenuCommand === 'function') {
       GM_registerMenuCommand('Toggle Onward on this site', () => {
         const host = location.hostname;
-        // With "only sites I list", the toggle puts the site on the list or takes it off.
-        const listed = store.get('runOn') === 'listed';
-        const key = listed ? 'allowHosts' : 'disabledHosts';
-        const list = store.get(key).slice();
-        const i = list.indexOf(host);
-        if (i >= 0) list.splice(i, 1);
-        else list.push(host);
-        store.set(key, list);
-        if (listed ? i < 0 : i >= 0) {
+        const t = toggleLists(loadSettings(), host);
+        store.set('allowHosts', t.allowHosts);
+        store.set('disabledHosts', t.disabledHosts);
+        if (t.on) {
           toast('Enabled on ' + host, 'ok');
           app.restart();
         } else {
           if (app.pager) app.pager.destroy();
           app.pager = null;
-          app.status = listed ? 'not on your list of sites' : 'disabled on this site';
+          app.status = t.disabledHosts.includes(host) ? 'disabled on this site' : 'not on your list of sites';
           toast('Disabled on ' + host);
         }
       });
@@ -2714,7 +2733,7 @@
   }
 
   return {
-    VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
+    VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
     itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });

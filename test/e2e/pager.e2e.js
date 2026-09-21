@@ -1739,6 +1739,25 @@ test('a Load more link whose address is this page is clicked, since it can only 
   await ctx.close();
 });
 
+test('with "only sites I list", the toggle really turns on a site turned off earlier, and Settings shows the list', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => { window.__gm = { runOn: 'listed', allowHosts: [], disabledHosts: ['127.0.0.1'] }; });
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  assert.equal(await pg.getByRole('textbox', { name: 'Turned off on these sites' }).inputValue(), '127.0.0.1');
+  await pg.getByRole('button', { name: 'Cancel' }).click();
+  await pg.evaluate(() => { window.__menu['Toggle Onward on this site'](); });
+  assert.match(await pg.evaluate(onwardText), /Enabled on 127\.0\.0\.1/);
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length > 5), 'it pages');
+  const gm = await pg.evaluate(() => window.__gm);
+  assert.deepEqual([gm.allowHosts, gm.disabledHosts], [['127.0.0.1'], []]);
+  // The list is yours to edit.
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('textbox', { name: 'Turned off on these sites' }).fill('x.example\nold.example');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  assert.deepEqual(await pg.evaluate(() => window.__gm.disabledHosts), ['x.example', 'old.example']);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

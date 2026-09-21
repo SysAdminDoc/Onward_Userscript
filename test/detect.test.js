@@ -356,6 +356,22 @@ test('a danger word the page\'s own address has is not signing out', () => {
   }
 });
 
+test('toggling a site: both lists, in both modes', () => {
+  const t = (s, host) => O.toggleLists(Object.assign({ runOn: 'all', allowHosts: [], disabledHosts: [] }, s), host);
+  // Every site: off and on again.
+  assert.deepEqual(t({}, 'a.example'), { on: false, allowHosts: [], disabledHosts: ['a.example'] });
+  assert.deepEqual(t({ disabledHosts: ['a.example', 'b.example'] }, 'a.example'), { on: true, allowHosts: [], disabledHosts: ['b.example'] });
+  // Only listed sites, listed by name: off takes it off the list.
+  assert.deepEqual(t({ runOn: 'listed', allowHosts: ['a.example'] }, 'a.example'), { on: false, allowHosts: [], disabledHosts: [] });
+  assert.deepEqual(t({ runOn: 'listed' }, 'a.example'), { on: true, allowHosts: ['a.example'], disabledHosts: [] });
+  // Covered by a parent domain on the list: off holds against it, and on again lifts that.
+  const off = t({ runOn: 'listed', allowHosts: ['example.com'] }, 'www.example.com');
+  assert.deepEqual(off, { on: false, allowHosts: ['example.com'], disabledHosts: ['www.example.com'] });
+  assert.deepEqual(t(Object.assign({ runOn: 'listed' }, off), 'www.example.com'), { on: true, allowHosts: ['example.com'], disabledHosts: [] });
+  // Left over from "every site" mode: on clears it and lists the site.
+  assert.deepEqual(t({ runOn: 'listed', disabledHosts: ['a.example'] }, 'a.example'), { on: true, allowHosts: ['a.example'], disabledHosts: [] });
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },

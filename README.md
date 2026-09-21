@@ -35,7 +35,7 @@ Open your userscript manager's menu on any page:
 
 | Command | What it does |
 | --- | --- |
-| Toggle Onward on this site | Turns it off or back on for the current host. With "Run on: only sites I list", it adds the site to the list or takes it off. |
+| Toggle Onward on this site | Turns it off or back on for the current host. With "Run on: only sites I list", it adds the site to the list or takes it off, and a site listed through its parent domain is turned off on its own. |
 | Load next page now | Loads the next page without scrolling. It also resumes after you pressed Stop or after a failure, and tells you when the last page has been reached. |
 | Load 5 more pages | Loads up to five pages one after another, handy for reading or printing a whole thread. It keeps to the page limit and the gap between requests. |
 | Run Onward here anyway | Starts Onward on a page where it stood by because the site seemed to load more by itself. |
@@ -84,6 +84,7 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 | Loading mode | auto | `auto` fetches first and falls back to an iframe when needed. |
 | Run on | every site | "only sites I list" keeps Onward off everywhere except the sites below. |
 | Sites to run on | empty | One host per line, used with "only sites I list". Subdomains are covered. |
+| Turned off on these sites | empty | The hosts you turned off with the toggle command, one per line. Delete a line to let Onward run there again. |
 | Stay off pages whose path matches | checkout, cart, sign-in, sign-up, account and password pages | A regular expression tested against the page's path (and a single-page app's `#/route`), case-insensitive. The default matches whole path segments, so a listing such as `/tag/account-security/` still pages. Adding pages to a checkout or sign-in flow can break it. "Run Onward here anyway" still works on these pages. |
 | Never run on these hosts | Gmail, Docs, YouTube, X, Facebook and a few more | One host per line. Subdomains are covered. |
 
