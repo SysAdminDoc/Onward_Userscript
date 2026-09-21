@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Onward asks the manager to connect only to the page's own site and three rule-list hosts (wedata.net, hoothin.github.io, cdn.jsdelivr.net) instead of anywhere. A rule list elsewhere still works once you allow it when Tampermonkey asks.
 - When a page has two next links that look equally good (a pager above and below the list), Onward takes the lower one, as Vivaldi and Pagetual do. Every way of finding the next page now goes through the same checks, so the shortcut Onward takes on later pages also switches an `http` link to `https` on a secure page.
 - Items whose class happens to contain "page" (a `product-page-card`, say) are no longer dropped from added pages as if they were the pager. Only a part whose links are mostly page numbers or next and previous counts as a pager.
 - A number in a table next to a link to the following number (a stats table, a scoreboard) is no longer taken for a pager. A pager without a telling class now has to show a run of page numbers.

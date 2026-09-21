@@ -449,6 +449,12 @@ test('two next links that score the same: the later one, under the list', () => 
   assert.equal(next(d, 'https://example.com/list/?page=2').url, 'https://example.com/list/?page=3&from=bottom');
 });
 
+test('the script asks to connect only to the page\'s own site and the known rule-list hosts', () => {
+  const header = require('fs').readFileSync(require.resolve('../src/onward.user.js'), 'utf8').split('// ==/UserScript==')[0];
+  const hosts = Array.from(header.matchAll(/^\/\/ @connect\s+(\S+)\s*$/gm), (m) => m[1]);
+  assert.deepEqual(hosts, ['self', 'wedata.net', 'hoothin.github.io', 'cdn.jsdelivr.net']);
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },

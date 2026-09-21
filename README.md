@@ -75,7 +75,7 @@ When automatic detection gets a site wrong, the picker is the quickest fix. You 
 
 A rule only takes over on pages where its selectors actually find something. On other pages of the same site, Onward falls back to finding the next page by itself.
 
-Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `insertBefore`) are understood too. Paste their URLs into "Rule list URLs" and Onward refreshes them weekly. Very broad patterns from those lists are skipped so they don't override detection.
+Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `insertBefore`) are understood too. Paste their URLs into "Rule list URLs" and Onward refreshes them weekly. Lists on wedata.net, hoothin.github.io and cdn.jsdelivr.net load straight away. For a list anywhere else, Tampermonkey asks you once whether Onward may connect to that site. Very broad patterns from those lists are skipped so they don't override detection.
 
 ## Settings
 

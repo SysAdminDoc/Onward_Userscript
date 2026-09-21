@@ -18,7 +18,10 @@
 // @grant        GM.setValue
 // @grant        GM.xmlHttpRequest
 // @grant        GM.registerMenuCommand
-// @connect      *
+// @connect      self
+// @connect      wedata.net
+// @connect      hoothin.github.io
+// @connect      cdn.jsdelivr.net
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
