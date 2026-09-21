@@ -121,15 +121,15 @@
 - [ ] P2: Index cached rules by host and read them once per page
   Why: for anyone who adds a rule list, Violentmonkey ships the whole value store with every injection, so the 932 KB wedata cache is paid on every page load in every tab, plus about 2.5 ms of regex matching; `loadSettings()` reads it up to three times per page.
   Evidence: bench 2026-09-21 (932,445 bytes stored, 233,591 gzipped, 3,376 of 3,824 rules start with a literal host); Violentmonkey `preinject-prepare.js`; Tampermonkey#1787; tophf/autopagerize's per-URL cache and literal-string checks.
-  Touches: `updateSources`, `loadSettings`, `matchRule`, `tryStart`.
-  Acceptance: the stored rule-list value for wedata is under 350 KB (gzip through `CompressionStream`, base64); a page on a host with no rule compiles only the rules without a literal host; `sourceRules` is read at most once per page load; the bench script reports under 0.5 ms for an unmatched URL.
+  Touches: `updateSources`, `loadSettings`, `matchRule`, `tryStart`, a new scripts/bench-rules.js (loads a saved wedata `items_all.json` and times storage size, parse and `matchRule`).
+  Acceptance: the stored rule-list value for wedata is under 350 KB (gzip through `CompressionStream`, base64); a page on a host with no rule compiles only the rules without a literal host; `sourceRules` is read at most once per page load; `node scripts/bench-rules.js` reports under 0.5 ms for an unmatched URL.
   Complexity: M
 
 - [ ] P2: Support the AutoPagerize integration API
   Why: 4 sources ask for hooks so other scripts can process new pages; weAutoPagerize, uAutoPagerize and AutoPagerize speak this API and Pagetual does not.
   Evidence: weAutoPagerize README compatibility table; tophf/autopagerize `GM_AutoPagerizeNextPageDoc`; hoothin/UserScripts#234; sixcious/infy-scroll#9.
   Touches: `Pager.detect`, `appendPage`, `addBar`, `boot`, README.md.
-  Acceptance: `GM_AutoPagerizeLoaded` fires on activation and `GM_AutoPagerizeNextPageLoaded` after each insert; `AutoPagerizeToggleRequest`, `AutoPagerizeEnableRequest` and `AutoPagerizeDisableRequest` on `document` control the pager; inserted page roots carry `autopagerize_page_element`; README documents these and `onward:page`; e2e listener sees every event.
+  Acceptance: `GM_AutoPagerizeLoaded` fires on activation and `GM_AutoPagerizeNextPageLoaded` after each insert; `AutoPagerizeToggleRequest`, `AutoPagerizeEnableRequest` and `AutoPagerizeDisableRequest` on `document` control the pager; every inserted item (or the wrapped-mode shell) carries `autopagerize_page_element`; README documents these and `onward:page`; e2e listener sees every event.
   Complexity: M
 
 - [ ] P2: Replace the site's pager with the latest loaded page's pager
@@ -299,12 +299,12 @@
   Why: Save ends with "Reload the page to apply them."
   Evidence: `openSettings` save handler at :1175.
   Touches: `openSettings`, `app.restart`.
-  Acceptance: Save restarts the pager with the new settings and pages already loaded stay in place; e2e changes the page cap and sees it applied.
+  Acceptance: threshold, page cap, bar visibility and URL sync apply to the running pager without removing loaded pages; changes to rules, mode or exclusions restart the pager; e2e changes the page cap mid-session and sees it applied.
   Complexity: S
 
 - [ ] P3: Localize the UI, starting with Simplified Chinese
   Why: Chinese-language sites and users dominate the Pagetual and XIU2 trackers, and Onward's UI strings are English only.
-  Evidence: community research 2026-09-21; Pagetual ships its name and description in 30 locales.
+  Evidence: RESEARCH.md "Personas" (Pagetual and XIU2/UserScript trackers are dominated by Chinese-language sites); Pagetual 1.9.37.133's metadata block localizes `@name` and `@description` into 30 locales.
   Touches: every user-facing string in src/onward.user.js.
   Acceptance: strings live in one table keyed by `navigator.language`, with `zh-CN` complete and English as the fallback; a test fails when a key is missing.
   Complexity: M
