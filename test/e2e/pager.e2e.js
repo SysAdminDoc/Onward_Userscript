@@ -989,6 +989,58 @@ test('a site that throws away every page Onward adds is told apart, in the bar a
   await ctx.close();
 });
 
+test('after a route change Onward waits for the new route\'s list instead of paging the old one', async () => {
+  const { pg, ctx, errors } = await open('/spaslow?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#app ul.posts > li.post').length >= 10), 'page 2 of the first route');
+  await pg.evaluate(() => window.scrollTo(0, 0));
+  await pg.click('#filter');
+  await pg.waitForTimeout(2500);
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('#app ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: site.PER * site.LAST }, (_, i) => 'Filtered ' + (i + 1)));
+  assert.equal(await pg.evaluate(() => location.search), '?filter=x&page=4');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a jump to #comments keeps the pages already added', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
+  const before = await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length);
+  await pg.evaluate(() => { location.hash = 'comments'; });
+  await pg.waitForTimeout(2000);
+  assert.ok(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length) >= before, 'nothing was taken back out');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a frame held up by a script that never arrives is still used once its items are there', async () => {
+  const { pg, ctx, errors } = await open('/iframeblock?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#cards > article.card').length >= 10, 40), 'page 2 is in');
+  assert.doesNotMatch(await pg.evaluate(onwardText), /failed/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a held-up frame that never stops changing is still used when the time runs out', async () => {
+  const { pg, ctx, errors } = await open('/iframebusy?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#cards > article.card').length >= 10, 100), 'page 2 is in');
+  assert.doesNotMatch(await pg.evaluate(onwardText), /failed/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('the iframe fallback waits its turn before asking for the page again', async () => {
+  site.hits.iframespaced.length = 0;
+  const { pg, ctx, errors } = await open('/iframespaced?page=1');
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#cards > article.card').length >= 10, 40), 'page 2 is in');
+  const two = site.hits.iframespaced.filter((h) => h.n === 2);
+  assert.deepEqual(two.map((h) => h.dest), ['empty', 'iframe'], 'a fetch, then the frame');
+  assert.ok(two[1].t - two[0].t >= 950, 'a second apart: ' + (two[1].t - two[0].t) + ' ms');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a redirect back to a page already shown ends paging', async () => {
   const { pg, ctx, errors } = await open('/redir?page=1');
   assert.ok(await scrollToEnd(pg, endBar), 'paging ended');

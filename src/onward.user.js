@@ -922,19 +922,28 @@
         silence(f.contentDocument);
         resolve({ doc: f.contentDocument, dispose: () => f.remove() });
       };
+      let lastSize = -1;
+      let still = 0;
       const poll = setInterval(() => {
         try {
           const d = f.contentDocument;
           if (d) silence(d);
-          if (d && d.readyState !== 'loading' && d.location.href !== 'about:blank' && ready(d)) finish();
+          if (!d || d.location.href === 'about:blank' || !ready(d)) return;
+          if (d.readyState !== 'loading') return finish();
+          // Items there but the page still loading: a parser held up by a
+          // script that never arrives. Take it once it stops changing for 3 s.
+          const size = d.getElementsByTagName('*').length;
+          still = size === lastSize ? still + 1 : 0;
+          lastSize = size;
+          if (still >= 10) finish();
         } catch (e) { finish(new Error('iframe blocked')); }
       }, 300);
       const timer = setTimeout(() => {
         try {
-          // A page that loaded but never grew items is handed back; a frame
-          // still on its blank placeholder never answered.
+          // A page that loaded, or has its items, is handed back; a frame still
+          // on its blank placeholder never answered.
           const d = f.contentDocument;
-          if (d && d.body && d.location.href !== 'about:blank' && d.readyState !== 'loading') return finish();
+          if (d && d.body && d.location.href !== 'about:blank' && (d.readyState !== 'loading' || ready(d))) return finish();
         } catch (e) { /* blocked */ }
         finish(new Error('timed out'));
       }, timeoutMs || FETCH_TIMEOUT_MS);
@@ -1073,6 +1082,7 @@
       this.container = content.container;
       this.path = describePath(content.container);
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
+      this.firstKey = content.items.length ? itemKey(content.items[0], true) : null;
       rememberItems(content.items, this.itemKeys);
       this.buttonMode = next.url === null;
       // Anchor: new pages go right after the last current item.
@@ -1486,6 +1496,11 @@
         if (!extractItems(doc, this).length && this.mode === 'auto' && safeOrigin(url) === location.origin) {
           // Probably rendered by scripts; a hidden iframe lets them run.
           console.info(TAG, 'no items in raw HTML, retrying in an iframe');
+          // The frame asks the site for the page again, so it waits its turn too.
+          const wait = (this.lastRequestAt || 0) + this.s.spacing - Date.now();
+          if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+          if (this.destroyed || signal.aborted) throw new Error('stopped');
+          this.lastRequestAt = Date.now();
           ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
           this.mode = 'iframe';
         }
@@ -1513,10 +1528,6 @@
         // again; a few repeats (products that moved) are just dropped.
         const { fresh, repeatShare } = splitRepeats(items, this.itemKeys);
         if (!fresh.length || repeatShare >= 0.9) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
-        rememberItems(fresh, this.itemKeys);
-        this.seen.add(stripHash(url));
-        this.seen.add(stripHash(finalUrl));
-
         const prepared = prepareItems(fresh, finalUrl);
         const frag = document.createDocumentFragment();
         for (const it of prepared) frag.appendChild(document.importNode(it, true));
@@ -1543,6 +1554,10 @@
           this.anchor.parentNode.insertBefore(frag, this.anchor);
         }
         release();
+        // Only now is the page on screen: a failure before this stays retryable.
+        rememberItems(fresh, this.itemKeys);
+        this.seen.add(stripHash(url));
+        this.seen.add(stripHash(finalUrl));
         bar.first = this.lastInserted;
         bar.size = this.wrap ? 1 : prepared.length;
         if (below) this.waitForReader();
@@ -2079,6 +2094,14 @@
           onUrl: (u) => { this.expectUrl = u; },
         });
         if (pager.detect()) {
+          // Right after a route change the old route's list can still be on
+          // screen (the address changes first, the data lands later): wait.
+          const from = opts.navFrom;
+          if (from && attempt < 2 && pager.container === from.container && pager.firstKey === from.first) {
+            pager.destroy();
+            this.status = 'waiting for the new page to render';
+            return retry();
+          }
           this.pager = pager;
           this.status = 'active';
           pager.start();
@@ -2152,10 +2175,15 @@
     let lastUrl = location.href;
     const urlChanged = (delay) => {
       if (location.href === lastUrl) return;
+      // A jump to #comments or #top stays on the same page.
+      const hashOnly = stripHash(location.href) === stripHash(lastUrl);
       const ours = location.href === app.expectUrl
         || (app.pager && (location.href === app.pager.selfUrl || app.pager.separators.some((x) => x.url === location.href) || location.href === app.pager.startUrl));
       lastUrl = location.href;
-      if (!ours && !app.picking) setTimeout(() => app.restart(), delay);
+      if (hashOnly || ours || app.picking) return;
+      const p = app.pager;
+      const navFrom = p && p.container ? { container: p.container, first: p.firstKey } : null;
+      setTimeout(() => app.restart({ navFrom }), delay);
     };
     // The Navigation API says so as soon as a route changes; polling stays for
     // browsers without it (and as a backstop), giving the app longer to render.

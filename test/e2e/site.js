@@ -40,7 +40,7 @@ function wav() {
   return b;
 }
 
-function route(url) {
+function route(url, req) {
   const u = new URL(url, 'http://x');
   const n = Math.max(1, Number(u.searchParams.get('page') || (/(\d+)/.exec(u.pathname) || [])[1] || 1));
 
@@ -296,6 +296,47 @@ function route(url) {
     // A paged list on a checkout page (order history, saved items): Onward stays off by default.
     return { body: page('Checkout ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/checkout?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/iframeblock') {
+    // Script-rendered (auto mode falls back to an iframe); pages after the
+    // first then hold the parser on a script that never arrives.
+    const items = JSON.stringify(Array.from({ length: PER }, (_, i) => `Card ${(n - 1) * PER + i + 1}`));
+    const block = n > 1 ? '<script src="/block.js"></script>' : '';
+    return { body: page('IframeBlock ' + n, `<section class="grid" id="cards"></section>${pager('/iframeblock?page=', n, 'Next')}
+      <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }</script>${block}`) };
+  }
+  if (u.pathname === '/iframebusy') {
+    // /iframeblock plus a ticker that keeps changing the page, so it never looks settled.
+    const items = JSON.stringify(Array.from({ length: PER }, (_, i) => `Card ${(n - 1) * PER + i + 1}`));
+    const block = n > 1 ? '<script>setInterval(() => { const t = document.getElementById(\'tick\'); if (t.children.length > 3) t.replaceChildren(); else t.append(document.createElement(\'b\')); }, 100);</script><script src="/block.js"></script>' : '';
+    return { body: page('IframeBusy ' + n, `<span id="tick"></span><section class="grid" id="cards"></section>${pager('/iframebusy?page=', n, 'Next')}
+      <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }</script>${block}`) };
+  }
+  if (u.pathname === '/block.js') return { body: '', type: 'text/javascript', delay: 1e9 };
+  if (u.pathname === '/iframespaced') {
+    // /spa with a log of each later page request and what asked for it (a fetch or a frame).
+    if (n > 1 && req) hits.iframespaced.push({ n, t: Date.now(), dest: req.headers['sec-fetch-dest'] });
+    const items = JSON.stringify(Array.from({ length: PER }, (_, i) => `Card ${(n - 1) * PER + i + 1}`));
+    return { body: page('IframeSpaced ' + n, `<section class="grid" id="cards"></section>${pager('/iframespaced?page=', n, 'Next')}
+      <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }</script>`) };
+  }
+  if (u.pathname === '/spaslow') {
+    // A router that pushes the new address first and draws the new route when its data lands 500 ms later.
+    const f = u.searchParams.get('filter');
+    const list = f ? posts(n).replace(/Post (\d+)/g, 'Filtered $1') : posts(n);
+    const base = f ? '/spaslow?filter=x&page=' : '/spaslow?page=';
+    const newItems = JSON.stringify(posts(1).replace(/Post (\d+)/g, 'Filtered $1'));
+    const newPager = JSON.stringify(pager('/spaslow?filter=x&page=', 1, 'Next'));
+    return { body: page('SPA slow ' + n, `<button id="filter">Filter</button><div id="app"><ul class="posts">${list}</ul><div id="pg">${pager(base, n, 'Next')}</div></div>
+      <script>document.getElementById('filter').onclick = () => {
+        history.pushState({}, '', '/spaslow?filter=x&page=1');
+        setTimeout(() => {
+          const ul = document.querySelector('#app ul.posts');
+          for (const li of ul.querySelectorAll(':scope > li.post')) li.remove();
+          ul.insertAdjacentHTML('beforeend', ${newItems});
+          document.getElementById('pg').innerHTML = ${newPager};
+        }, 500);
+      };</script>`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };
@@ -331,7 +372,7 @@ function route(url) {
 
 function start() {
   const server = http.createServer((req, res) => {
-    const r = route(req.url);
+    const r = route(req.url, req);
     if (!r) { res.writeHead(404); res.end('nope'); return; }
     // Record requests the client gave up on before the answer went out.
     res.on('close', () => { if (!res.writableEnded) hits.aborted.push(req.url); });
@@ -347,6 +388,6 @@ function start() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-const hits = { flaky: {}, aborted: [], rules: 0, spaced: [], emptyonce: {} };
+const hits = { flaky: {}, aborted: [], rules: 0, spaced: [], emptyonce: {}, iframespaced: [] };
 
 module.exports = { start, hits, PER, LAST, LIVE_PER, LIVE_LAST };
