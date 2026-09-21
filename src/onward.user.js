@@ -50,8 +50,11 @@
     ],
     rules: [],             // user rules (Onward format)
     sources: [],           // URLs of rule lists (Onward or AutoPagerize/wedata JSON)
-    sourceRules: [],       // cached rules from sources
-    sourcesUpdated: 0,
+    sourceRules: [],       // cached rules from sources, flattened for matching
+    sourceCache: {},       // last good copy of each source: { url: { rules, at } }
+    sourcesUpdated: 0,     // last time every source updated cleanly
+    sourcesTried: 0,       // last refresh attempt, to back off after failures
+    sourcesLock: 0,        // a tab refreshing right now (expires after a minute)
   };
 
   const store = {
@@ -1528,24 +1531,59 @@
     document.documentElement.appendChild(host);
   }
 
-  async function updateSources(urls, loud) {
-    const all = [];
-    for (const u of urls) {
-      try {
-        const text = await fetchText(u);
-        const rules = normalizeRules(JSON.parse(text));
-        all.push(...rules);
-        if (loud) toast(`${rules.length} rules from ${safeHost(u)}`, 'ok');
-      } catch (e) {
-        console.warn(TAG, 'rule list failed', u, e);
-        if (loud) toast(`Rule list ${safeHost(u)} failed: ${e.message}`, 'err');
-      }
+  /**
+   * Decide whether a downloaded rule list replaces the last good copy. Mirrors
+   * have served an HTML error page as the list, so anything that isn't JSON,
+   * holds no rules, or shrank by more than half keeps the old copy.
+   */
+  function acceptRuleList(prev, text, now) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch (e) { return { entry: prev, error: 'not a rule list (not JSON)' }; }
+    const rules = normalizeRules(parsed);
+    if (!rules.length) return { entry: prev, error: 'no rules in it' };
+    if (prev && prev.rules.length && rules.length < prev.rules.length / 2) {
+      return { entry: prev, error: `only ${rules.length} rules, down from ${prev.rules.length}` };
     }
-    // Specific patterns first, so a catch-all never shadows a site rule.
-    all.sort((a, b) => b.url.length - a.url.length);
-    store.set('sourceRules', all);
-    store.set('sourcesUpdated', Date.now());
-    return all;
+    return { entry: { rules, at: now } };
+  }
+
+  async function updateSources(urls, loud) {
+    // One tab at a time; the lock expires in case its tab closes mid-update.
+    const now = Date.now();
+    if (now - store.get('sourcesLock') < 60000) {
+      if (loud) toast('Another tab is updating the rule lists right now.', 'err');
+      return null;
+    }
+    store.set('sourcesLock', now);
+    store.set('sourcesTried', now);
+    try {
+      const cache = Object.assign({}, store.get('sourceCache'));
+      const failures = [];
+      for (const u of urls) {
+        let res;
+        try { res = acceptRuleList(cache[u], await fetchText(u), Date.now()); } catch (e) { res = { entry: cache[u], error: e.message }; }
+        if (res.error) {
+          console.warn(TAG, 'rule list kept its last good copy', u, res.error);
+          failures.push(`${safeHost(u)}: ${res.error}`);
+        } else {
+          cache[u] = res.entry;
+          if (loud) toast(`${res.entry.rules.length} rules from ${safeHost(u)}`, 'ok');
+        }
+        if (!cache[u]) delete cache[u];
+      }
+      // Lists no longer configured leave the cache.
+      for (const k of Object.keys(cache)) if (!urls.includes(k)) delete cache[k];
+      const all = [].concat(...Object.values(cache).map((e) => e.rules));
+      // Specific patterns first, so a catch-all never shadows a site rule.
+      all.sort((a, b) => b.url.length - a.url.length);
+      store.set('sourceCache', cache);
+      store.set('sourceRules', all);
+      if (failures.length) toast('Kept the last good copy of a rule list. ' + failures.join('; '), 'err');
+      else store.set('sourcesUpdated', Date.now());
+      return all;
+    } finally {
+      store.set('sourcesLock', 0);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1800,7 +1838,8 @@
 
     // Refresh rule lists weekly, in the background.
     const s = loadSettings();
-    if (s.sources.length && Date.now() - s.sourcesUpdated > 7 * 864e5) updateSources(s.sources, false);
+    // Weekly, and after a failed refresh no more often than every 6 hours.
+    if (s.sources.length && Date.now() - s.sourcesUpdated > 7 * 864e5 && Date.now() - s.sourcesTried > 6 * 36e5) updateSources(s.sources, false);
 
     app.tryStart(0);
 
@@ -1817,6 +1856,6 @@
 
   return {
     VERSION, boot, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, itemKey, splitRepeats, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, itemKey, splitRepeats, signature, barTag,
   };
 });

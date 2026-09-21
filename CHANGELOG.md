@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Rule lists keep their last good copy. A download that isn't a rule list (a mirror's error page, for instance), has no rules, or lost more than half of them is ignored with a message, and Onward tries again later instead of waiting a week. Only one tab refreshes the lists at a time.
 - Pages Onward adds can no longer act on the page you're reading. A refresh tag can't send your tab elsewhere, a `<base>` tag can't redirect your links, frames with inline documents and `javascript:` links are removed, and `<noscript>` blocks are dropped. Images that kept their real address inside `<noscript>` get it back first.
 - Repeats are now caught item by item. An item you've already seen on an earlier page (a product that moved, a pinned post) is left out, and paging only ends when a page is almost all repeats. Before, only the first 5,000 characters of a whole page were compared, so a long post repeated at the top of every page could end paging early.
 - When a site answers a page past the end by redirecting back to a page you already have (common on WordPress), Onward now stops there instead of adding that page again.

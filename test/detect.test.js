@@ -245,6 +245,22 @@ test('chooseRule: site rules first, render retries, last page, then list rules',
   assert.deepEqual(O.chooseRule([excluded], [list], href, page, 0), { rule: list }, 'an excluded site rule does not count');
 });
 
+test('a rule list that comes back broken keeps the last good copy', () => {
+  const good = { rules: O.normalizeRules([{ url: '^https://a\\.com/', next: 'a.n' }, { url: '^https://b\\.com/', next: 'a.n' }, { url: '^https://c\\.com/', next: 'a.n' }]), at: 1 };
+  const html = '<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>'.padEnd(122, ' ');
+  assert.equal(html.length, 122);
+  const bad = O.acceptRuleList(good, html, 2);
+  assert.equal(bad.entry, good, 'the old copy stays');
+  assert.match(bad.error, /not JSON/);
+  assert.match(O.acceptRuleList(good, '[]', 2).error, /no rules/);
+  assert.match(O.acceptRuleList(good, JSON.stringify([{ url: '^https://a\\.com/', next: 'x' }]), 2).error, /down from 3/);
+  const fresh = O.acceptRuleList(good, JSON.stringify([{ url: '^https://d\\.com/', next: 'x' }, { url: '^https://e\\.com/', next: 'x' }]), 2);
+  assert.equal(fresh.error, undefined);
+  assert.equal(fresh.entry.rules.length, 2);
+  assert.equal(fresh.entry.at, 2);
+  assert.equal(O.acceptRuleList(undefined, html, 2).entry, undefined, 'no old copy: nothing to keep');
+});
+
 test('item keys: same item, same key; different item or picture, different key', () => {
   const a = [...dom(`<ul>${items(3)}</ul>`).querySelectorAll('li')];
   const b = [...dom(`<ul>${items(3)}</ul>`).querySelectorAll('li')];

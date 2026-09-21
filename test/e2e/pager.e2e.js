@@ -728,6 +728,58 @@ test('a load-more reader parked in the footer gets one batch per scroll', async 
   await ctx.close();
 });
 
+// GM storage shared by every tab of a context (localStorage), like a real manager's.
+const SHARED_SHIM = `
+  const gmLoad = () => JSON.parse(localStorage.getItem('__gm') || '{}');
+  window.GM_getValue = (k, d) => { const v = gmLoad(); return k in v ? v[k] : d; };
+  window.GM_setValue = (k, v) => { const all = gmLoad(); all[k] = v; localStorage.setItem('__gm', JSON.stringify(all)); };
+  window.__menu = {};
+  window.GM_registerMenuCommand = (name, fn) => { window.__menu[name] = fn; };
+`;
+
+test('only one tab refreshes the rule lists at a time', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const a = await ctx.newPage();
+  const b = await ctx.newPage();
+  await a.goto(base + '/blog?page=1');
+  await b.goto(base + '/blog?page=1');
+  const list = base + '/rules.json?mode=good';
+  await a.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourcesUpdated: 0, sourcesTried: 0 })), list);
+  site.hits.rules = 0;
+  await a.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await a.waitForTimeout(300); // the first tab is mid-download (1.5 s) when the second starts
+  await b.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  // The second tab's own start backs off; its Settings button is refused by the lock.
+  await b.evaluate(() => { window.__menu['Settings'](); });
+  await b.getByRole('button', { name: 'Update rule lists now' }).click();
+  await a.waitForTimeout(2500);
+  const stored = await a.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
+  assert.equal(site.hits.rules, 1, 'the list was fetched once');
+  assert.match(await b.evaluate(onwardText), /Another tab is updating/);
+  assert.equal(stored.sourceRules.length, 2);
+  assert.ok(stored.sourcesUpdated > 0, 'marked fresh');
+  assert.equal(stored.sourcesLock, 0, 'lock released');
+  await ctx.close();
+});
+
+test('a rule list that comes back as an error page keeps its last good copy', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const pg = await ctx.newPage();
+  await pg.goto(base + '/blog?page=1');
+  const list = base + '/rules.json?mode=html';
+  const rules = [1, 2, 3].map((k) => ({ name: '', url: `^https://keep${k}\\.example/`, next: 'a.n', content: undefined, insert: '', mode: '', click: false, excludeUrl: '' }));
+  await pg.evaluate(([l, r]) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourceCache: { [l]: { rules: r, at: 1 } }, sourceRules: r, sourcesUpdated: 0, sourcesTried: 0 })), [list, rules]);
+  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await pg.waitForTimeout(2500);
+  const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
+  assert.equal(stored.sourceCache[list].rules.length, 3, 'the cached copy survived');
+  assert.equal(stored.sourceRules.length, 3, 'and is still what matching uses');
+  assert.equal(stored.sourcesUpdated, 0, 'not marked fresh');
+  assert.ok(stored.sourcesTried > 0, 'but the attempt is recorded, for the back-off');
+  assert.match(await pg.evaluate(onwardText), /Kept the last good copy/);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

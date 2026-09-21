@@ -201,6 +201,12 @@ function route(url) {
     const list = n > 1 ? posts(n).replace('<li class="post">', '<li class="post"><meta http-equiv="refresh" content="0;url=/landed">') : posts(n);
     return { body: page('Metaref ' + n, `<ul class="posts">${list}</ul>${pager('/metaref?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/rules.json') {
+    // A rule list; mode=html answers like a mirror serving its error page. Slow, so a refresh takes a while.
+    hits.rules++;
+    if (u.searchParams.get('mode') === 'html') return { body: '<html><body><h1>502 Bad Gateway</h1></body></html>', delay: 1500 };
+    return { body: JSON.stringify([{ url: '^https://one\\.example/', next: 'a.n' }, { url: '^https://two\\.example/', next: 'a.n' }]), type: 'application/json', delay: 1500 };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };
@@ -252,6 +258,6 @@ function start() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-const hits = { flaky: {}, aborted: [] };
+const hits = { flaky: {}, aborted: [], rules: 0 };
 
 module.exports = { start, hits, PER, LAST, LIVE_PER, LIVE_LAST };
