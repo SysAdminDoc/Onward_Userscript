@@ -2216,24 +2216,33 @@
   const listCount = (e) => (e ? (e.count != null ? e.count : (e.rules || []).length) : 0);
 
   /**
-   * A rule list as stored. Its rules are packed once (catch-alls, which are
-   * never used, left out). Beside them, plain text a page can search without
-   * unpacking anything: a line per host ("\nexample.com 0,1a", rule numbers
-   * in base 36), and the other rules' patterns with the text every match of
-   * each needs. The rules are unpacked only on a page one of them matches.
+   * A rule list as stored (catch-alls, which are never used, left out). Plain
+   * text a page can search without unpacking anything: a line per host
+   * ("\nexample.com 0,1a", rule numbers in base 36), and the other, general
+   * rules' patterns with the text every match of each needs. The rules
+   * themselves are packed in two parts, so a page only a general rule matches
+   * (any .com address, say) unpacks the small one.
    */
   async function buildListEntry(rules, at) {
-    const kept = rules.filter((r) => !catchAll(r));
     const byHost = {};
+    const hosted = [];
     const generic = [];
-    kept.forEach((r, i) => {
+    const general = [];
+    for (const r of rules) {
+      if (catchAll(r)) continue;
       const hs = literalHosts(r.url);
-      if (hs) for (const h of hs) (byHost[h] = byHost[h] || []).push(i.toString(36));
-      else generic.push([i, requiredLiteral(r.url), r.url]);
-    });
+      if (hs) {
+        const n = (hosted.push(slimRule(r)) - 1).toString(36);
+        for (const h of hs) (byHost[h] = byHost[h] || []).push(n);
+      } else {
+        // Its pattern is kept in plain text already.
+        const { url, ...rest } = slimRule(r);
+        generic.push([general.push(rest) - 1, requiredLiteral(url), url]);
+      }
+    }
     let hosts = '\n';
     for (const h of Object.keys(byHost)) hosts += h + ' ' + byHost[h].join(',') + '\n';
-    return { at, count: rules.length, hosts, generic, rules: await packJSON(kept.map(slimRule)) };
+    return { at, count: rules.length, hosts, generic, rules: await packJSON(hosted), general: await packJSON(general) };
   }
 
   const testUrl = (pattern, href) => {
@@ -2261,24 +2270,47 @@
       if (typeof entry.hosts !== 'string' || typeof entry.rules !== 'string') continue;
       const at = entry.hosts.indexOf('\n' + host + ' ');
       const mine = at < 0 ? [] : entry.hosts.slice(at + host.length + 2, entry.hosts.indexOf('\n', at + 1)).split(',').map((n) => parseInt(n, 36));
-      const maybe = (entry.generic || []).filter(([, lit, url]) => (!lit || href.includes(lit)) && testUrl(url, href)).map(([i]) => i);
+      const maybe = (entry.generic || []).filter(([, lit, url]) => (!lit || href.includes(lit)) && testUrl(url, href));
       if (!mine.length && !maybe.length) continue;
-      const rules = await unpackOnce(entry.rules);
-      const expand = (i) => Object.assign({ name: '', insert: '', mode: '', click: false, excludeUrl: '' }, rules[i], { source });
-      for (const i of mine) bucket.push(expand(i));
-      for (const i of maybe) general.push(expand(i));
+      const blank = { name: '', insert: '', mode: '', click: false, excludeUrl: '' };
+      if (mine.length) {
+        const rules = await unpackOnce(entry.rules);
+        for (const i of mine) bucket.push(Object.assign({}, blank, rules[i], { source }));
+      }
+      if (maybe.length) {
+        // An entry from before the general rules were packed apart numbers them among all the rules.
+        const rules = await unpackOnce(typeof entry.general === 'string' ? entry.general : entry.rules);
+        for (const g of maybe) general.push(Object.assign({}, blank, rules[g[0]], { url: g[2], source }));
+      }
     }
     const longestFirst = (a, b) => b.url.length - a.url.length;
     return bucket.sort(longestFirst).concat(general.sort(longestFirst));
   }
 
+  /**
+   * The list rules that could apply at href: the cached lists', and the rules
+   * 0.1.0 kept flattened, but only while some list has no cached copy (after
+   * that they'd all be tested twice).
+   */
+  async function candidateRules(cache, legacy, sources, href) {
+    const lists = await listRulesFor(cache, href);
+    const copied = sources.length > 0 && sources.every((u) => cache[u]);
+    return legacy.length && !copied ? lists.concat(legacy) : lists;
+  }
+
   let listStore = null; // the stored lists, read once per page
-  /** List rules for href: packed lists by their index, and the rules 0.1.0 kept flattened until they're replaced. */
-  function loadListRules(href) {
+  const readLists = () => {
     if (!listStore) listStore = { cache: store.get('sourceCache') || {}, legacy: store.get('sourceRules') || [] };
-    const { cache, legacy } = listStore;
-    const lists = listRulesFor(cache, href);
-    return legacy.length ? lists.then((r) => r.concat(legacy)) : lists;
+    return listStore;
+  };
+  function loadListRules(href) {
+    const { cache, legacy } = readLists();
+    return candidateRules(cache, legacy, store.get('sources') || [], href);
+  }
+  /** Some list is only in a form an earlier version stored (or not stored at all): its index isn't there to use yet. */
+  function listsOutdated(sources) {
+    const { cache } = readLists();
+    return sources.some((u) => !cache[u] || typeof cache[u].rules !== 'string');
   }
   function forgetListRules() {
     listStore = null;
@@ -2706,8 +2738,11 @@
 
     // Refresh rule lists weekly, in the background.
     const s = loadSettings();
-    // Weekly, and after a failed refresh no more often than every 6 hours.
-    if (s.sources.length && Date.now() - s.sourcesUpdated > 7 * 864e5 && Date.now() - s.sourcesTried > 6 * 36e5) updateSources(s.sources, false);
+    // Weekly, and after a failed refresh no more often than every 6 hours. Right
+    // away when a list isn't stored the way this version reads it fastest (just
+    // updated from 0.1.0, or a list added since).
+    if (s.sources.length && Date.now() - s.sourcesTried > 6 * 36e5
+        && (Date.now() - s.sourcesUpdated > 7 * 864e5 || listsOutdated(s.sources))) updateSources(s.sources, false);
 
     app.tryStart(0);
 
@@ -2735,6 +2770,6 @@
 
   return {
     VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });

@@ -607,7 +607,8 @@ test('rule lists: a page looks up its host and only the other rules its address 
   assert.equal(entry.count, 5, 'the count covers the whole list');
   assert.equal(entry.hosts, '\nexample.com 0,1\nother.com 2\n', 'a line per host');
   assert.deepEqual(entry.generic.map((g) => g[1]), ['.blogspot.com/'], 'the catch-all is left out; the other keeps the text it needs');
-  assert.equal((await O.unpackJSON(entry.rules)).length, 4);
+  assert.equal((await O.unpackJSON(entry.rules)).length, 3, 'the rules indexed by host');
+  assert.equal((await O.unpackJSON(entry.general)).length, 1, 'the general one, packed apart');
   const cache = { 'https://lists.example/one.json': entry };
   const at = async (href) => (await O.listRulesFor(cache, href)).map((r) => r.next);
   assert.deepEqual(await at('https://example.com/list/2'), ['a.n', 'a.m'], 'its host, longest pattern first');
@@ -620,6 +621,35 @@ test('rule lists: a page looks up its host and only the other rules its address 
   // A list kept unpacked by an earlier build is still read.
   const legacy = { 'https://lists.example/old.json': { rules: rules.slice(2, 3), at: 1 } };
   assert.deepEqual((await O.listRulesFor(legacy, 'https://other.com/')).map((r) => r.next), ['a.n']);
+});
+
+test('rule lists: a page only a general rule matches never unpacks the rules indexed by host', async () => {
+  const rules = O.normalizeRules([
+    { url: '^https://example\\.com/', next: 'a.m', content: '.x' },
+    { url: '^https?://(www\\.)?.+\\.com/', next: 'a.g', content: '.y' },
+  ], { fromList: true });
+  O.forgetListRules();
+  const entry = await O.buildListEntry(rules, 5);
+  // Proof it's never read: a host pack that can't be unpacked.
+  const cache = { list: Object.assign({}, entry, { rules: 'j:{broken' }) };
+  const found = await O.listRulesFor(cache, 'https://shop.unlisted.com/list?page=2');
+  assert.deepEqual(found.map((r) => [r.url, r.next, r.content, r.source]), [['^https?://(www\\.)?.+\\.com/', 'a.g', '.y', 'list']]);
+  // An entry from before the split (one pack, general rules numbered among all) still reads.
+  O.forgetListRules();
+  const old = { list: { at: 1, count: 2, hosts: '\nexample.com 0\n', generic: [[1, '.com/', rules[1].url]], rules: await O.packJSON(rules.map((r) => ({ url: r.url, next: r.next, content: r.content }))) } };
+  assert.deepEqual((await O.listRulesFor(old, 'https://example.com/a')).map((r) => r.next), ['a.m', 'a.g']);
+});
+
+test('rules 0.1.0 kept flattened are only tested while some list has no copy of its own', async () => {
+  const rules = O.normalizeRules([{ url: '^https://example\\.com/', next: 'a.m' }], { fromList: true });
+  O.forgetListRules();
+  const packed = await O.buildListEntry(rules, 5);
+  const href = 'https://example.com/a';
+  const n = async (cache, sources) => (await O.candidateRules(cache, rules, sources, href)).length;
+  assert.equal(await n({}, ['L']), 1, 'no copy yet: the flattened rules stand in');
+  assert.equal(await n({ L: packed }, ['L']), 1, 'the packed copy, once');
+  assert.equal(await n({ L: { rules, at: 1 } }, ['L']), 1, 'an unpacked copy from an earlier build, once');
+  assert.equal(await n({ L: packed }, ['L', 'M']), 2, 'M has no copy, so the flattened rules still count');
 });
 
 test('a rule list that comes back broken keeps the last good copy', () => {

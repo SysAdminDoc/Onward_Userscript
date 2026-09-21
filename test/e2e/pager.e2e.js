@@ -1758,6 +1758,24 @@ test('with "only sites I list", the toggle really turns on a site turned off ear
   await ctx.close();
 });
 
+test('right after an update from 0.1.0, the rule lists are fetched again so their index is used', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const pg = await ctx.newPage();
+  await pg.goto(base + '/blog?page=1');
+  const list = base + '/rules.json?mode=good';
+  const rules = [1, 2, 3].map((k) => ({ name: '', url: `^https://keep${k}\\.example/`, next: 'a.n', insert: '', mode: '', click: false, excludeUrl: '' }));
+  // What 0.1.0 left: every rule flattened, and a refresh only yesterday (the weekly one is days away).
+  await pg.evaluate(([l, r]) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourceRules: r, sourcesUpdated: Date.now() - 864e5, sourcesTried: Date.now() - 864e5 })), [list, rules]);
+  site.hits.rules = 0;
+  await inject(pg, SHARED_SHIM);
+  await pg.waitForFunction((l) => ((JSON.parse(localStorage.getItem('__gm')).sourceCache || {})[l] || {}).count > 0, list, { timeout: 10000 });
+  const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
+  assert.equal(site.hits.rules, 1, 'fetched now, once');
+  assert.equal(typeof stored.sourceCache[list].rules, 'string', 'stored packed');
+  assert.deepEqual(stored.sourceRules, [], 'the flattened copy is gone');
+  await ctx.close();
+});
+
 test('a tab that lost the refresh lock to another never takes it back, with several lists', async () => {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
