@@ -1992,9 +1992,14 @@
   // Settings panel
   // ---------------------------------------------------------------------------
 
+  let closeSettings = null; // the open panel's close(), so the Settings command closes it the same way
   function openSettings(app) {
     const existing = document.querySelector('[data-onward-panel]');
-    if (existing) { existing.remove(); return; }
+    if (existing) {
+      if (closeSettings) closeSettings();
+      else existing.remove();
+      return;
+    }
     const s = loadSettings();
     const { host, sr } = shadowHost('div', 'position:fixed;inset:0;z-index:2147483647;display:block;');
     host.setAttribute('data-onward-panel', '');
@@ -2028,11 +2033,20 @@
     // Focusable, so a keyboard can scroll it.
     const diag = h('pre', { class: 'diag', tabindex: '0', 'aria-label': 'Diagnostics' }, diagText);
     // Focus goes into the dialog and, when it closes, back where it was.
-    const opener = document.activeElement;
+    // Focus inside a shadow root (a page bar's button, a web component) shows
+    // here as its host, which can't take it back; follow it down.
+    let opener = document.activeElement;
+    while (opener && opener.shadowRoot && opener.shadowRoot.activeElement) opener = opener.shadowRoot.activeElement;
+    // A modal dialog: the page behind it can't be reached by Tab while it's open.
+    const wasInert = document.body.inert;
+    document.body.inert = true;
     const close = () => {
+      closeSettings = null;
       host.remove();
+      document.body.inert = wasInert;
       if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
     };
+    closeSettings = close;
     const save = () => {
       let parsed;
       try { parsed = JSON.parse(rules.value || '[]'); } catch (e) { err.textContent = 'Site rules are not valid JSON: ' + e.message; return; }
@@ -2375,7 +2389,8 @@
       // Some pages block the async clipboard; a selected textarea still copies.
       const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' });
       ta.value = text;
-      document.body.appendChild(ta);
+      // Not in the body: Settings, where this runs, makes the body inert.
+      document.documentElement.appendChild(ta);
       ta.select();
       let ok = false;
       try { ok = document.execCommand('copy'); } catch (e2) { /* nothing more to try */ }

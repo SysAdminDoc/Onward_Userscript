@@ -1551,6 +1551,32 @@ test('screen readers hear pages load, and the end', async () => {
   await ctx.close();
 });
 
+test('Settings keeps focus in the dialog and gives it back however it closes', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  const inPanel = () => document.activeElement && document.activeElement.hasAttribute('data-onward-panel');
+  const onPage = () => { const a = document.activeElement; return !!a && a !== document.body && !a.hasAttribute('data-onward-panel'); };
+  // Closed with the Settings command: focus comes back.
+  await pg.evaluate(() => document.querySelector('a[href="/post/1"]').focus());
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  assert.ok(await pg.evaluate(inPanel));
+  // Tab and Shift+Tab never reach the page behind the dialog.
+  for (const key of ['Shift+Tab', 'Shift+Tab', 'Tab', 'Tab']) {
+    await pg.keyboard.press(key);
+    assert.equal(await pg.evaluate(onPage), false, 'focus reached the page after ' + key);
+  }
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  assert.equal(await pg.evaluate(() => document.activeElement.getAttribute('href')), '/post/1', 'focus came back');
+  assert.equal(await pg.evaluate(() => document.body.inert), false, 'the page works again');
+  // Focus on a button inside Onward's own page bar (a shadow root) comes back to that button.
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
+  await pg.getByRole('button', { name: '↑ Top' }).first().focus();
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('button', { name: 'Cancel' }).click();
+  assert.equal(await pg.evaluate(() => { const a = document.activeElement; return a && a.shadowRoot && a.shadowRoot.activeElement && a.shadowRoot.activeElement.textContent; }), '↑ Top');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('announcements take turns between the two regions, and toasts are announced too', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1');
   // Which region each message lands in.
@@ -1638,6 +1664,23 @@ test('Settings shows diagnostics and copies them', async () => {
   assert.match(text, /\nMode: auto; wrapped pages: no; scrolls: the window/);
   assert.match(text, /\nLast error: none/);
   assert.match(text, /\nRule: none; found by detection/);
+  assert.match(await pg.evaluate(onwardText), /Diagnostics copied/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Copy diagnostics falls back to a selected textarea where the clipboard API is blocked', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+  // Blocked where the script runs; the test still reads the clipboard.
+  await inScriptWorld(pg, () => {
+    const read = navigator.clipboard.readText.bind(navigator.clipboard);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('blocked')), readText: read } });
+  });
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('button', { name: 'Copy diagnostics' }).click();
+  await pg.waitForTimeout(300);
+  assert.match(await pg.evaluate(() => navigator.clipboard.readText()), /^Onward \d+\.\d+\.\d+ on http/);
   assert.match(await pg.evaluate(onwardText), /Diagnostics copied/);
   assert.deepEqual(errors, []);
   await ctx.close();
