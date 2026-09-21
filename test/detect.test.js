@@ -140,6 +140,39 @@ test('prepareItems fixes lazy images, relative URLs and strips scripts', () => {
   assert.equal(it.querySelector('script'), null);
 });
 
+test('prepareItems strips markup that would act on the page', () => {
+  const d = dom(`<ul>
+    <li class="i" id="meta"><meta http-equiv="refresh" content="0;url=/elsewhere"><a href="/p/1">one</a></li>
+    <li class="i" id="base"><base href="https://evil.example/"><a href="/p/2">two</a></li>
+    <li class="i" id="ns"><noscript><img src="/tracker.gif" onerror="alert(1)"></noscript>three</li>
+    <li class="i" id="frame"><iframe srcdoc="<script>parent.x=1</script>"></iframe><iframe src="/ok.html"></iframe>four</li>
+    <li class="i" id="js"><a href="javascript:alert(1)">a</a><img src=" JavaScript:alert(2)"><form action="javascript:x()"><button formaction="javascript:y()">b</button></form></li>
+  </ul>`);
+  const [meta, base, ns, frame, js] = O.prepareItems([...d.querySelectorAll('li.i')], 'https://example.com/list/page/2/');
+  assert.equal(meta.querySelector('meta'), null, 'meta refresh gone');
+  assert.equal(base.querySelector('base'), null, 'base gone');
+  assert.equal(base.querySelector('a').getAttribute('href'), 'https://example.com/p/2', 'links resolve against the page, not the removed base');
+  assert.equal(ns.querySelector('noscript'), null, 'noscript gone');
+  assert.equal(frame.querySelectorAll('iframe').length, 1, 'the srcdoc frame is gone, the plain one stays');
+  assert.equal(frame.querySelector('iframe').getAttribute('src'), 'https://example.com/ok.html');
+  assert.equal(js.querySelector('a').hasAttribute('href'), false, 'javascript: href removed');
+  assert.equal(js.querySelector('img').hasAttribute('src'), false, 'javascript: src removed');
+  assert.equal(js.querySelector('form').hasAttribute('action'), false, 'javascript: action removed');
+  assert.equal(js.querySelector('button').hasAttribute('formaction'), false, 'javascript: formaction removed');
+});
+
+test('prepareItems takes an image URL from a sibling noscript, and drops inert top-level items', () => {
+  const d = dom(`<div class="card"><img src="data:image/gif;base64,R0lGOD" class="lazy"><noscript><img src="/real.jpg" srcset="/real.jpg 1x, /real@2x.jpg 2x"></noscript></div>
+    <div class="card"><img src="/placeholder.gif" data-src="/lazy.jpg"><noscript><img src="/fallback.jpg"></noscript></div>
+    <noscript class="card"><p>no scripts</p></noscript>`);
+  const cards = [...d.querySelectorAll('.card')];
+  const out = O.prepareItems(cards, 'https://example.com/');
+  assert.equal(out.length, 2, 'the top-level noscript item is dropped');
+  assert.equal(out[0].querySelector('img').getAttribute('src'), 'https://example.com/real.jpg');
+  assert.match(out[0].querySelector('img').getAttribute('srcset'), /real@2x\.jpg 2x/);
+  assert.equal(out[1].querySelector('img').getAttribute('src'), 'https://example.com/lazy.jpg', 'a data-src image keeps its own lazy URL');
+});
+
 test('charset: header, meta, fallback', () => {
   const enc = (s) => new TextEncoder().encode(s);
   assert.equal(O.sniffCharset(enc('<html>'), 'text/html; charset=Shift_JIS'), 'shift_jis');

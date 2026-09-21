@@ -196,6 +196,11 @@ function route(url) {
     const links = (n > 1 ? `<a class="pg" href="/prevcls?page=${n - 1}">← Previous page</a> ` : '') + (n < LAST ? `<a class="pg" href="/prevcls?page=${n + 1}">Next page →</a>` : '');
     return { body: page('Prevcls ' + n, `<ul class="posts">${posts(n)}</ul><div class="nav">${links}</div>`) };
   }
+  if (u.pathname === '/metaref') {
+    // Pages after the first hide a refresh in their first post.
+    const list = n > 1 ? posts(n).replace('<li class="post">', '<li class="post"><meta http-equiv="refresh" content="0;url=/landed">') : posts(n);
+    return { body: page('Metaref ' + n, `<ul class="posts">${list}</ul>${pager('/metaref?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

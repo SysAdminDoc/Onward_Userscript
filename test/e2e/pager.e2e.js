@@ -642,6 +642,18 @@ test('an item repeated from an earlier page is dropped, and paging goes on', asy
   await ctx.close();
 });
 
+test('a refresh hidden in page 2 does not navigate the tab', async () => {
+  const { pg, ctx, errors } = await open('/metaref?page=1', () => { window.__alive = true; });
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  await pg.waitForTimeout(500);
+  const r = await pg.evaluate(() => ({ alive: window.__alive === true, path: location.pathname, posts: document.querySelectorAll('ul.posts > li.post').length }));
+  assert.ok(r.alive, 'still the same document');
+  assert.equal(r.path, '/metaref');
+  assert.equal(r.posts, site.PER * site.LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a redirect back to a page already shown ends paging', async () => {
   const { pg, ctx, errors } = await open('/redir?page=1');
   assert.ok(await scrollToEnd(pg, endBar), 'paging ended');

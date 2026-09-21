@@ -559,15 +559,51 @@
     }
   }
 
+  // Markup that acts on the page instead of showing content: a refresh
+  // navigates the tab, <base> rebases every relative URL, srcdoc frames run
+  // scripts, and <noscript> is live markup in a DOMParser document (which
+  // parses with scripting off), so its images load twice and handlers fire.
+  const INERT_SEL = 'script, meta, base, noscript, iframe[srcdoc]';
+  const URL_ATTRS = ['src', 'href', 'action', 'formaction', 'xlink:href'];
+  const JS_URL_RE = /^\s*javascript:/i;
+
+  /** A placeholder image whose real URL is only in a sibling <noscript><img> takes it from there. */
+  function takeNoscriptImages(root) {
+    for (const ns of root.querySelectorAll('noscript')) {
+      const real = ns.querySelector('img[src]');
+      if (!real || !ns.parentElement) continue;
+      for (const img of ns.parentElement.children) {
+        if (img.tagName !== 'IMG') continue;
+        const src = img.getAttribute('src') || '';
+        const lazy = LAZY_ATTRS.some((a) => { const v = img.getAttribute(a); return v && !/^data:/.test(v); });
+        if ((!src || PLACEHOLDER_RE.test(src)) && !lazy) {
+          img.setAttribute('src', real.getAttribute('src'));
+          if (real.getAttribute('srcset')) img.setAttribute('srcset', real.getAttribute('srcset'));
+          break;
+        }
+      }
+    }
+  }
+
+  function stripInert(root) {
+    for (const el of root.querySelectorAll(INERT_SEL)) el.remove();
+    for (const el of [root, ...root.querySelectorAll('*')]) {
+      for (const a of URL_ATTRS) if (JS_URL_RE.test(el.getAttribute(a) || '')) el.removeAttribute(a);
+    }
+  }
+
   function prepareItems(items, base) {
+    const out = [];
     for (const it of items) {
-      for (const s of it.querySelectorAll('script')) s.remove();
-      if (it.tagName === 'SCRIPT') continue;
+      if (it.matches(INERT_SEL)) continue;
+      takeNoscriptImages(it);
+      stripInert(it);
       fixLazyImages(it);
       if (it.matches('img, source')) fixLazyImages(it.parentElement || it);
       absolutize(it, base);
+      out.push(it);
     }
-    return items.filter((it) => it.tagName !== 'SCRIPT');
+    return out;
   }
 
   function sniffCharset(bytes, contentType, fallback) {
