@@ -1715,6 +1715,15 @@ test('Resume at the end of the list loads the next page, even if you scroll away
   await ctx.close();
 });
 
+test('a Load more link whose address is this page is clicked, since it can only stay here', async () => {
+  const { pg, ctx, errors } = await open('/samemore');
+  assert.ok(await scrollToEnd(pg, endBar, 40), 'to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), site.PER * site.LAST);
+  assert.equal(await pg.evaluate(() => location.pathname), '/samemore');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

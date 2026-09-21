@@ -152,6 +152,13 @@ function route(url, req) {
         }, 500);
       };</script>`) };
   }
+  if (u.pathname === '/samemore') {
+    // A Load more link whose href is this page (the no-script fallback); a script handles the click.
+    return { body: page('Same-page more', `<ul class="posts" id="list">${posts(1)}</ul><a class="load-more" id="lm" href="/samemore">Load more</a>
+      <script>let n = 1; document.getElementById('lm').onclick = (e) => { e.preventDefault(); n++; setTimeout(() => {
+        for (let i = 1; i <= 5; i++) { const li = document.createElement('li'); li.className = 'post'; li.textContent = 'Loaded ' + n + '.' + i + ' with summary text'; document.getElementById('list').append(li); }
+        if (n >= ${LAST}) document.getElementById('lm').remove(); }, 150); };</script>`) };
+  }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {
     // Loads more by itself near the bottom, and still advertises rel=next for crawlers.

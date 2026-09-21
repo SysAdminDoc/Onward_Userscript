@@ -220,10 +220,16 @@
   /** Two addresses of the same page, maybe scrolled to another spot on it. */
   const samePage = (a, b) => a === b || (stripHash(a) === stripHash(b) && !routeHash(a) && !routeHash(b));
 
-  /** Clicking it would load another page: a link with a real address. */
-  const navigates = (el) => {
+  /**
+   * Clicking it would take the tab to another page: a link with a real address.
+   * A link to the page itself doesn't (a script-driven "Load more" often keeps
+   * one for browsers without scripts).
+   */
+  const navigates = (el, pageUrl) => {
     const href = el.getAttribute('href');
-    return !!href && !JUNK_HREF_RE.test(href);
+    if (!href || JUNK_HREF_RE.test(href)) return false;
+    const u = absUrl(href, pageUrl);
+    return !(u && samePage(u, pageUrl));
   };
 
   /** The sign-out, unsubscribe and delete words in an address's path and query, or null for a broken address. */
@@ -282,7 +288,7 @@
         const u = acceptUrl(el.getAttribute('href') || el.getAttribute('value'));
         if (u) return { url: u, el, score: 1000, how: 'rule' };
         // A link Onward refused (another site, a page already shown) isn't clicked instead: that would leave the page.
-        if (opts.rule.click && isVisible(el, layout) && !navigates(el)) return { url: null, el, score: 1000, how: 'rule-click' };
+        if (opts.rule.click && isVisible(el, layout) && !navigates(el, pageUrl)) return { url: null, el, score: 1000, how: 'rule-click' };
       }
       return null;
     }
@@ -335,7 +341,7 @@
 
       if (u) {
         consider({ url: u, el, score, how: more ? 'more-link' : 'text' });
-      } else if (layout && isVisible(el, layout) && (more || opts.allowButtons) && !navigates(el)) {
+      } else if (layout && isVisible(el, layout) && (more || opts.allowButtons) && !navigates(el, pageUrl)) {
         // Load-more buttons only make sense on the live page.
         consider({ url: null, el, score: score - 5, how: 'button' });
       }
