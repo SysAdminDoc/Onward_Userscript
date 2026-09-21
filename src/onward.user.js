@@ -1190,6 +1190,11 @@
     return el;
   }
 
+  /** An AutoPagerize API event on document, as weAutoPagerize and uAutoPagerize send them. */
+  function fireAutoPagerize(name) {
+    document.dispatchEvent(new Event(name, { bubbles: false, cancelable: true }));
+  }
+
   let statusBox = null;
   /** Two visually hidden live regions for screen readers, made once Onward starts so they're there before anything is said. */
   function statusRegions() {
@@ -1782,6 +1787,8 @@
         const frag = document.createDocumentFragment();
         for (const it of prepared) frag.appendChild(document.importNode(it, true));
         this.lastPageNodes = Array.from(frag.childNodes);
+        // Scripts written for AutoPagerize find added items by this class.
+        for (const n of this.lastPageNodes) if (n.nodeType === 1) n.classList.add('autopagerize_page_element');
         this.page++;
         this.setBar(bar, url, 'Page ' + this.page, '');
         const heightBefore = this.metrics().height;
@@ -1791,6 +1798,7 @@
           const shell = this.container.cloneNode(false);
           shell.removeAttribute('id');
           shell.setAttribute('data-onward-page', String(this.page));
+          shell.classList.add('autopagerize_page_element');
           shell.appendChild(frag);
           this.anchor.parentNode.insertBefore(shell, this.anchor);
           this.lastPageNodes = [shell];
@@ -1878,6 +1886,11 @@
     }
 
     onPageAppended(url) {
+      // AutoPagerize filters get each added node, then the page as a whole.
+      for (const n of this.lastPageNodes || []) {
+        if (n.nodeType === 1 && n.isConnected) n.dispatchEvent(new CustomEvent('AutoPagerize_DOMNodeInserted', { bubbles: true, detail: url }));
+      }
+      fireAutoPagerize('GM_AutoPagerizeNextPageLoaded');
       win.dispatchEvent(new CustomEvent('onward:page', { detail: { page: this.page, url } }));
     }
 
@@ -2726,6 +2739,7 @@
           this.pager = pager;
           this.status = 'active';
           pager.start();
+          fireAutoPagerize('GM_AutoPagerizeLoaded');
           return;
         }
         this.status = 'no next page found';
@@ -2787,6 +2801,20 @@
     // updated from 0.1.0, or a list added since).
     if (s.sources.length && Date.now() - s.sourcesTried > 6 * 36e5
         && (Date.now() - s.sourcesUpdated > 7 * 864e5 || listsOutdated(s.sources))) updateSources(s.sources, false);
+
+    // The AutoPagerize API: other scripts can pause paging and start it again.
+    const setPaging = (on) => {
+      const p = app.pager;
+      if (on) {
+        if (p && p.userStopped) p.resume();
+        else if (!p) app.restart();
+      } else if (p && !p.stopped) {
+        p.userStop();
+      }
+    };
+    document.addEventListener('AutoPagerizeEnableRequest', () => setPaging(true));
+    document.addEventListener('AutoPagerizeDisableRequest', () => setPaging(false));
+    document.addEventListener('AutoPagerizeToggleRequest', () => setPaging(!(app.pager && !app.pager.stopped)));
 
     app.tryStart(0);
 

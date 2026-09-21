@@ -90,6 +90,26 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 
 At the bottom of the panel, Diagnostics shows what Onward found on the page you're on: how it found the next link and where that leads, the list and how many items it started with, the loading mode, the rule it used and where that rule came from, and the last error. "Copy diagnostics" puts all of it on the clipboard for a bug report. Nothing is sent anywhere.
 
+## Integration
+
+Other scripts on the page can follow what Onward adds. It sends the same events as AutoPagerize, so scripts written for AutoPagerize or weAutoPagerize keep working.
+
+| Event | Sent on | When |
+| --- | --- | --- |
+| `onward:page` | `window` | After each added page or load-more batch. `event.detail` is `{ page, url }`, where `url` is null for a load-more batch. |
+| `GM_AutoPagerizeLoaded` | `document` | When Onward starts on a page. |
+| `GM_AutoPagerizeNextPageLoaded` | `document` | After each added page. |
+| `AutoPagerize_DOMNodeInserted` | each added element (it bubbles) | As a page goes in. `event.detail` is that page's address. |
+
+Every added element carries the class `autopagerize_page_element` (in wrapped mode, the page's copy of the list does).
+
+Onward listens on `document` for `AutoPagerizeDisableRequest`, `AutoPagerizeEnableRequest` and `AutoPagerizeToggleRequest`, so another script can pause paging and start it again:
+
+```js
+window.addEventListener('onward:page', (e) => console.log('page', e.detail.page, 'from', e.detail.url));
+document.dispatchEvent(new Event('AutoPagerizeDisableRequest'));
+```
+
 ## Development
 
 The tests need Node 22.22.2 or later on the 22 line, 24.15 or later on the 24 line, or 26 and up (what jsdom 30 supports).

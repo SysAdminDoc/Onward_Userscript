@@ -331,6 +331,8 @@ test('a list the site redraws switches to wrapped pages', async () => {
   }));
   assert.equal(r.original, site.PER, 'the site keeps its own list');
   assert.equal(r.wrapped, site.PER * (site.LAST - 1), 'pages 2-4 live in copies of the list');
+  // Scripts written for AutoPagerize find each copy by its class.
+  assert.ok(await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts[data-onward-page]')).every((u) => u.classList.contains('autopagerize_page_element'))));
   assert.deepEqual(errors, []);
   await ctx.close();
 });
@@ -1965,6 +1967,46 @@ test('a tab that lost the refresh lock to another never takes it back, with seve
   assert.equal(retaken, null, 'this tab took the lock back: ' + retaken);
   assert.equal(stored.sourcesLock && stored.sourcesLock.id, 'other');
   assert.equal(stored.sourceCache[lists[1]].count, 2, 'and it still stored both lists');
+  await ctx.close();
+});
+
+test('the AutoPagerize API: events, the page element class, and pause requests', async () => {
+  const { pg, ctx, errors } = await open('/long?page=1', () => {
+    window.__ap = { events: [], inserted: [] };
+    for (const n of ['GM_AutoPagerizeLoaded', 'GM_AutoPagerizeNextPageLoaded']) document.addEventListener(n, () => window.__ap.events.push(n));
+    document.addEventListener('AutoPagerize_DOMNodeInserted', (e) => window.__ap.inserted.push([e.target.className, e.detail]));
+    addEventListener('onward:page', (e) => window.__ap.events.push('onward:page ' + e.detail.page));
+  });
+  const posts = () => document.querySelectorAll('#list > li.post').length;
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('#list > li.post').length >= 15, 40), 'pages 2 and 3');
+  const ap = await pg.evaluate(() => window.__ap);
+  assert.deepEqual(ap.events.slice(0, 5), ['GM_AutoPagerizeLoaded', 'GM_AutoPagerizeNextPageLoaded', 'onward:page 2', 'GM_AutoPagerizeNextPageLoaded', 'onward:page 3']);
+  assert.equal(ap.inserted.length, (await pg.evaluate(posts)) - site.PER, 'one event per added item');
+  assert.ok(ap.inserted.every(([cls, url]) => /\bautopagerize_page_element\b/.test(cls) && /\/long\?page=\d$/.test(url)));
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post.autopagerize_page_element').length), (await pg.evaluate(posts)) - site.PER);
+  // Another script asks Onward to pause: nothing more loads, then it asks again to carry on.
+  await pg.evaluate(() => document.dispatchEvent(new Event('AutoPagerizeDisableRequest')));
+  const paused = await pg.evaluate(posts);
+  for (let i = 0; i < 6; i++) {
+    await pg.keyboard.press('End');
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(posts), paused, 'paused');
+  await pg.evaluate(() => document.dispatchEvent(new Event('AutoPagerizeToggleRequest')));
+  await pg.keyboard.press('End');
+  await pg.waitForFunction((n) => document.querySelectorAll('#list > li.post').length > n, paused, { timeout: 8000 });
+  // Paused once more, then an enable request.
+  await pg.evaluate(() => document.dispatchEvent(new Event('AutoPagerizeDisableRequest')));
+  const again = await pg.evaluate(posts);
+  for (let i = 0; i < 4; i++) {
+    await pg.keyboard.press('End');
+    await pg.waitForTimeout(300);
+  }
+  assert.equal(await pg.evaluate(posts), again, 'paused again');
+  await pg.evaluate(() => document.dispatchEvent(new Event('AutoPagerizeEnableRequest')));
+  await pg.keyboard.press('End');
+  await pg.waitForFunction((n) => document.querySelectorAll('#list > li.post').length > n, again, { timeout: 8000 });
+  assert.deepEqual(errors, []);
   await ctx.close();
 });
 
