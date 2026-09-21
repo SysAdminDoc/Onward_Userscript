@@ -1774,6 +1774,8 @@ test('Settings shows diagnostics and copies them', async () => {
 test('Copy diagnostics falls back to a selected textarea where the clipboard API is blocked', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1');
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+  // The page rewrites whatever is copied on its document.
+  await pg.evaluate(() => document.addEventListener('copy', (e) => { e.preventDefault(); e.clipboardData.setData('text/plain', 'rewritten by the page'); }));
   // Blocked where the script runs; the test still reads the clipboard.
   await inScriptWorld(pg, () => {
     const read = navigator.clipboard.readText.bind(navigator.clipboard);
@@ -1784,6 +1786,21 @@ test('Copy diagnostics falls back to a selected textarea where the clipboard API
   await pg.waitForTimeout(300);
   assert.match(await pg.evaluate(() => navigator.clipboard.readText()), /^Onward \d+\.\d+\.\d+ on http/);
   assert.match(await pg.evaluate(onwardText), /Diagnostics copied/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a copy that fails says so as an error', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await inScriptWorld(pg, () => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('blocked')) } });
+    document.execCommand = () => false;
+  });
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('button', { name: 'Copy diagnostics' }).click();
+  await pg.waitForTimeout(300);
+  const toast = await pg.evaluate(() => Array.from(document.querySelectorAll('[data-onward]')).flatMap((w) => Array.from(w.shadowRoot?.querySelectorAll('.t') || [])).map((t) => t.className + ' ' + t.textContent));
+  assert.ok(toast.some((t) => /\berr\b/.test(t) && /Couldn.t copy/.test(t)), JSON.stringify(toast));
   assert.deepEqual(errors, []);
   await ctx.close();
 });

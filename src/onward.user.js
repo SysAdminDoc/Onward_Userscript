@@ -2192,16 +2192,20 @@
       h('label', {}, 'Load pages on ' + location.hostname, hostLoadSel),
       h('label', {}, 'Run on', runOnSel),
       h('div', { class: 'blk' }, 'Sites to run on, one per line (with “only sites I list”)', allow),
-      h('div', { class: 'blk' }, 'Turned off on these sites, one per line (the toggle command adds them)', offHosts),
+      h('div', { class: 'blk' }, 'Turned off on these sites, one per line (the toggle command adds them)', offHosts,
+        h('div', { class: 'hint' }, 'Exact host names: example.com here leaves www.example.com on.')),
       h('div', { class: 'blk' }, 'Stay off pages whose path matches', skip,
         h('div', { class: 'hint' }, 'A regular expression. Leave it empty to run on every page.')),
       h('div', { class: 'blk' }, 'Site rules (JSON)', rules,
         h('div', { class: 'hint' }, '[{"url": "^https://example\\\\.com/list", "next": "a.next", "content": "#results > .item"}]. CSS or XPath. Optional: "insert", "mode", "click".')),
       h('div', { class: 'blk' }, 'Never run on these hosts', excl),
       h('div', { class: 'blk' }, 'Diagnostics', diag,
-        h('div', { class: 'hint' }, 'What Onward found on this page. Paste it into a bug report; nothing is sent anywhere.'),
+        h('div', { class: 'hint' }, 'What Onward found on this page, for a bug report. It includes this page’s address and the next one, which can hold private details (a search, a session), so read it over before you paste it anywhere. Nothing is sent.'),
         h('div', { class: 'row', style: 'justify-content:flex-start' }, h('button', {
-          onclick: async () => toast(await copyText(diagText) ? 'Diagnostics copied.' : 'Couldn’t copy. Select the text and copy it yourself.', 'ok'),
+          onclick: async () => {
+            const ok = await copyText(diagText);
+            toast(ok ? 'Diagnostics copied.' : 'Couldn’t copy. Select the text and copy it yourself.', ok ? 'ok' : 'err');
+          },
         }, 'Copy diagnostics'))),
       h('div', { class: 'blk' }, 'Rule list URLs (optional)', srcs,
         h('div', { class: 'hint' }, `Onward or AutoPagerize/wedata JSON. ${Object.values(store.get('sourceCache') || {}).reduce((n, e) => n + listCount(e), 0) || (store.get('sourceRules') || []).length} cached rules.`),
@@ -2508,6 +2512,8 @@
       // Some pages block the async clipboard; a selected textarea still copies.
       const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' });
       ta.value = text;
+      // The page's own copy handlers (which may rewrite what's copied) don't get this one.
+      ta.addEventListener('copy', (e) => e.stopPropagation());
       // Not in the body: Settings, where this runs, makes the body inert.
       document.documentElement.appendChild(ta);
       ta.select();

@@ -89,11 +89,11 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 | Load pages on this site | as set above | The same choice for the site you're on only. |
 | Run on | every site | "only sites I list" keeps Onward off everywhere except the sites below. |
 | Sites to run on | empty | One host per line, used with "only sites I list". Subdomains are covered. |
-| Turned off on these sites | empty | The hosts you turned off with the toggle command, one per line. Delete a line to let Onward run there again. |
+| Turned off on these sites | empty | The hosts you turned off with the toggle command, one per line. Delete a line to let Onward run there again. These are exact names, so `example.com` here leaves `www.example.com` on. |
 | Stay off pages whose path matches | checkout, cart, sign-in, sign-up, account and password pages | A regular expression tested against the page's path (and a single-page app's `#/route`), case-insensitive. The default leaves listings alone (paths through `/tag/`, `/topics/`, `/category/` and the like), so `/tag/account-security/` still pages. Adding pages to a checkout or sign-in flow can break it. "Run Onward here anyway" still works on these pages. |
 | Never run on these hosts | Gmail, Docs, YouTube, X, Facebook and a few more | One host per line. Subdomains are covered. |
 
-At the bottom of the panel, Diagnostics shows what Onward found on the page you're on: how it found the next link and where that leads, the list and how many items it started with, the loading mode, the rule it used and where that rule came from, and the last error. "Copy diagnostics" puts all of it on the clipboard for a bug report. Nothing is sent anywhere.
+At the bottom of the panel, Diagnostics shows what Onward found on the page you're on: how it found the next link and where that leads, the list and how many items it started with, the loading mode, the rule it used and where that rule came from, and the last error. "Copy diagnostics" puts all of it on the clipboard for a bug report. It includes the page's address and the next one, which can hold private details, so read it over before you paste it. Nothing is sent anywhere.
 
 ## Integration
 
