@@ -341,25 +341,32 @@
    * @returns {{url: string|null, el: Element, score: number, how: string}|null}
    *   url is null for a button that has to be clicked (load-more style).
    */
-  function findNext(doc, pageUrl, opts) {
-    opts = opts || {};
-    const layout = opts.layout !== undefined ? opts.layout : hasLayout(doc);
+  /**
+   * For links on the page at pageUrl: the address a next link leads to, or null
+   * when Onward won't follow it (not http(s), this page or one already shown,
+   * another origin, a sign-out or delete link). http becomes https on a secure page.
+   */
+  function nextUrlChecker(pageUrl, seen) {
     const here = stripHash(pageUrl);
     // Same origin only (scheme, host and port): a next link elsewhere would be
     // fetched with the user's cookies into a page whose scripts can read it.
     const origin = safeOrigin(pageUrl);
-    const seen = opts.seen || new Set();
-
-    const acceptUrl = (href) => {
+    return (href) => {
       if (!href || JUNK_HREF_RE.test(href)) return null;
       let u = absUrl(href, pageUrl);
       if (!u || !/^https?:/.test(u)) return null;
       if (/^https:/.test(pageUrl) && /^http:/.test(u)) u = u.replace(/^http:/, 'https:');
-      if (stripHash(u) === here || seen.has(stripHash(u))) return null;
+      if (stripHash(u) === here || (seen && seen.has(stripHash(u)))) return null;
       if (safeOrigin(u) !== origin) return null;
       if (dangerousUrl(u, pageUrl)) return null;
       return u;
     };
+  }
+
+  function findNext(doc, pageUrl, opts) {
+    opts = opts || {};
+    const layout = opts.layout !== undefined ? opts.layout : hasLayout(doc);
+    const acceptUrl = nextUrlChecker(pageUrl, opts.seen);
 
     // 1. Explicit rule
     if (opts.rule && opts.rule.next) {
@@ -384,8 +391,10 @@
     const body = doc.body || doc.documentElement;
     const cands = body.querySelectorAll('a[href], button, [role="button"], [role="link"], input[type="button"], input[type="submit"]');
     let best = null;
+    // On a tie the later one wins (the pager under the list, as Vivaldi and
+    // Pagetual do), unless it's a button and the earlier one is a link.
     const consider = (c) => {
-      if (!best || c.score > best.score || (c.score === best.score && c.url && !best.url)) best = c;
+      if (!best || c.score > best.score || (c.score === best.score && (c.url || !best.url))) best = c;
     };
     const bumped = new Set(incrementUrls(pageUrl).map(stripHash));
     // A site rule that supplied only the items: its own next link wasn't on the
@@ -1969,12 +1978,8 @@
       // Same spot as last time first, then the general heuristics.
       if (this.nextPath && !this.rule) {
         const el = resolvePath(doc, this.nextPath);
-        const href = el && el.getAttribute('href');
-        const u = href && absUrl(href, url);
-        if (u && safeOrigin(u) === safeOrigin(url) && !seen.has(stripHash(u)) && stripHash(u) !== stripHash(url) && !dangerousUrl(u, url)
-            && labelOf(el).join(' ') === labelOf(this.next.el).join(' ')) {
-          return { url: u, el, how: 'path' };
-        }
+        const u = el && nextUrlChecker(url, seen)(el.getAttribute('href'));
+        if (u && labelOf(el).join(' ') === labelOf(this.next.el).join(' ')) return { url: u, el, how: 'path' };
       }
       return findNext(doc, url, { rule: this.rule, seen, layout: false });
     }
@@ -3075,7 +3080,7 @@
   }
 
   return {
-    VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
+    VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, nextUrlChecker, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
     itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
   };
 });

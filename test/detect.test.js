@@ -434,6 +434,21 @@ test('items whose class merely contains "page" are kept', () => {
   assert.equal(O.findContent(inside, {}).items.length, 5);
 });
 
+test('next links: one check for every way a next link is found', () => {
+  const check = O.nextUrlChecker('https://example.com/list/?page=2', new Set(['https://example.com/list/?page=3']));
+  assert.equal(check('/list/?page=4'), 'https://example.com/list/?page=4');
+  assert.equal(check('http://example.com/list/?page=4'), 'https://example.com/list/?page=4', 'http is upgraded on a secure page');
+  for (const href of ['https://other.example/list/?page=4', 'https://example.com:8443/list/?page=4', 'javascript:next()', '#', '',
+    '/list/?page=2#top', '/list/?page=3', '/account/logout', 'mailto:a@example.com']) assert.equal(check(href), null, href);
+  // On an http page an https link is another origin.
+  assert.equal(O.nextUrlChecker('http://example.com/l?p=1')('https://example.com/l?p=2'), null);
+});
+
+test('two next links that score the same: the later one, under the list', () => {
+  const d = dom(`<nav class="pagination"><a class="next" href="/list/?page=3&amp;from=top">Next</a></nav><ul>${items(5)}</ul><nav class="pagination"><a class="next" href="/list/?page=3&amp;from=bottom">Next</a></nav>`);
+  assert.equal(next(d, 'https://example.com/list/?page=2').url, 'https://example.com/list/?page=3&from=bottom');
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },

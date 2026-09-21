@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- When a page has two next links that look equally good (a pager above and below the list), Onward takes the lower one, as Vivaldi and Pagetual do. Every way of finding the next page now goes through the same checks, so the shortcut Onward takes on later pages also switches an `http` link to `https` on a secure page.
 - Items whose class happens to contain "page" (a `product-page-card`, say) are no longer dropped from added pages as if they were the pager. Only a part whose links are mostly page numbers or next and previous counts as a pager.
 - A number in a table next to a link to the following number (a stats table, a scoreboard) is no longer taken for a pager. A pager without a telling class now has to show a run of page numbers.
 - Onward runs on managers that only offer the async `GM.*` functions and no menu, such as Userscripts for Safari. It reads its settings once when a page opens (the big rule lists only if you use some), saves through `GM.setValue`, and without a menu shows a small "Onward" button in the corner and an "Onward…" button on its page bars, which open Settings with the menu's commands in it. Not yet tried on a real Apple device.
