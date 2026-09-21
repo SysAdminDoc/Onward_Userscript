@@ -622,24 +622,39 @@
         insert: r.insert || r.insertBefore || '',
         mode: r.mode || '',
         click: !!r.click,
+        excludeUrl: typeof r.excludeUrl === 'string' ? r.excludeUrl : '',
       };
       if (typeof rule.url !== 'string' || !rule.url) continue;
-      try { new RegExp(rule.url); } catch (e) { continue; }
+      // A broken excludeUrl can't be honoured, so the rule can't be trusted either.
+      try { new RegExp(rule.url); new RegExp(rule.excludeUrl); } catch (e) { continue; }
       out.push(rule);
     }
     return out;
   }
 
-  function matchRule(rules, href) {
+  /** Rules whose url pattern matches this address, in order. */
+  function matchingRules(rules, href) {
+    const out = [];
     for (const r of rules) {
       if (r.disabled) continue;
       try {
         // Catch-all rules from big lists (e.g. "^https?://.") shouldn't beat detection.
         if (r.url.replace(/[\^$]/g, '').length < 12 && /^\^?https?/.test(r.url) && !/[a-z0-9]\.[a-z]/i.test(r.url)) continue;
-        if (new RegExp(r.url).test(href)) return r;
+        if (!new RegExp(r.url).test(href)) continue;
+        if (r.excludeUrl && new RegExp(r.excludeUrl).test(href)) continue;
+        out.push(r);
       } catch (e) { /* skip bad pattern */ }
     }
-    return null;
+    return out;
+  }
+
+  function matchRule(rules, href) {
+    return matchingRules(rules, href)[0] || null;
+  }
+
+  /** The first rule whose selectors find something on this page. */
+  function fittingRule(rules, doc) {
+    return rules.find((r) => queryAll(doc, r.next).length > 0 && (!r.content || queryAll(doc, r.content).length > 0)) || null;
   }
 
   // ---------------------------------------------------------------------------
@@ -1287,7 +1302,7 @@
       let parsed;
       try { parsed = JSON.parse(rules.value || '[]'); } catch (e) { err.textContent = 'Site rules are not valid JSON: ' + e.message; return; }
       const normalized = normalizeRules(parsed);
-      if (normalized.length !== (Array.isArray(parsed) ? parsed.length : 0)) { err.textContent = 'Every rule needs a valid "url" regex.'; return; }
+      if (normalized.length !== (Array.isArray(parsed) ? parsed.length : 0)) { err.textContent = 'Every rule needs a valid "url" regex (and "excludeUrl", when set).'; return; }
       for (const el of sr.querySelectorAll('[data-k]')) {
         const k = el.getAttribute('data-k');
         let v = el.value;
@@ -1500,8 +1515,20 @@
         const host = location.hostname;
         if (s.disabledHosts.includes(host)) { this.status = 'disabled on this site'; return; }
         if (s.exclude.some((x) => host === x || host.endsWith('.' + x))) { this.status = 'excluded host'; return; }
-        const userRule = matchRule(s.rules, location.href);
-        const rule = userRule || matchRule(s.sourceRules, location.href);
+        const retry = () => {
+          // Many lists are rendered after load; look again a couple of times.
+          if (attempt < 2) setTimeout(() => this.tryStart(attempt + 1, opts), attempt === 0 ? 1500 : 4000);
+        };
+        // A rule is only used where its selectors find something; otherwise the
+        // next rule, then auto-detection.
+        const userRules = matchingRules(s.rules, location.href);
+        const userRule = fittingRule(userRules, document);
+        if (!userRule && userRules.length && attempt < 2) {
+          // Probably not rendered yet; the rule gets the retries before detection does.
+          this.status = 'waiting for the page to render';
+          return retry();
+        }
+        const rule = userRule || fittingRule(matchingRules(s.sourceRules, location.href), document);
         // A rule the user wrote or picked means they want paging here.
         if (!opts.force && !userRule && selfPagingSite()) {
           this.status = STANDING_BY;
@@ -1526,8 +1553,7 @@
           return;
         }
         this.status = 'no next page found';
-        // Many lists are rendered after load; look again a couple of times.
-        if (attempt < 2) setTimeout(() => this.tryStart(attempt + 1, opts), attempt === 0 ? 1500 : 4000);
+        retry();
       },
     };
 
@@ -1569,6 +1595,6 @@
 
   return {
     VERSION, boot, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, contentHash, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, contentHash, signature, barTag,
   };
 });

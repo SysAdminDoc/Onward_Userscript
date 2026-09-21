@@ -65,6 +65,9 @@ When automatic detection gets a site wrong, the picker is the quickest fix. You 
 - `insert` is optional. New pages go before the first element it matches.
 - `mode` is `auto`, `fetch` or `iframe`. Use `iframe` for sites that build their lists with scripts.
 - Set `click` to `true` when `next` is a button with no link, such as "Load more".
+- `excludeUrl` is optional. The rule is skipped on addresses it matches.
+
+A rule only takes over on pages where its selectors actually find something. On other pages of the same site, Onward falls back to finding the next page by itself.
 
 Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `insertBefore`) are understood too. Paste their URLs into "Rule list URLs" and Onward refreshes them weekly. Very broad patterns from those lists are skipped so they don't override detection.
 

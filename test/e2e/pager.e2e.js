@@ -8,7 +8,7 @@ const site = require('./site');
 
 const SCRIPT = fs.readFileSync(path.join(__dirname, '../../src/onward.user.js'), 'utf8');
 const SHIM = `
-  window.__gm = {};
+  window.__gm = window.__gm || {};
   window.GM_getValue = (k, d) => (k in window.__gm ? window.__gm[k] : d);
   window.GM_setValue = (k, v) => { window.__gm[k] = v; };
   window.__menu = {};
@@ -382,6 +382,20 @@ test('picking Next on a Bootstrap pager saves a rule that pages forward', async 
   const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
   assert.deepEqual(posts, Array.from({ length: 15 }, (_, i) => 'Post ' + (i + 6)), 'pages 3 and 4 follow page 2; page 1 never loads');
   assert.ok(logs.some((l) => /active: rule/.test(l)), 'the saved rule is what ran');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a saved rule whose selectors miss this page gives way to detection', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => {
+    window.__gm = { rules: [{ name: 'other layout', url: '^https?://127\\.0\\.0\\.1(:\\d+)?/', next: 'a.nowhere', content: '.nothing > li', insert: '', mode: '', click: false, excludeUrl: '' }] };
+  });
+  const logs = [];
+  pg.on('console', (m) => logs.push(m.text()));
+  // Two retries (1.5 s, then 4 s) belong to the rule before detection steps in.
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'detection paged to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.ok(logs.some((l) => /active: text/.test(l)), 'auto-detection ran, not the rule');
   assert.deepEqual(errors, []);
   await ctx.close();
 });

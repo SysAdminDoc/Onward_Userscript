@@ -167,6 +167,29 @@ test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipp
   assert.equal(O.matchRule(rules, 'https://site.org/x').click, true);
 });
 
+test('rules: excludeUrl skips a rule, and a broken one drops it', () => {
+  const rules = O.normalizeRules([
+    { url: '^https://ex\\.com/', next: 'a.n', excludeUrl: '/search' },
+    { url: '^https://ex\\.com/', next: 'a.m' },
+    { url: '^https://ex\\.com/', next: 'a.x', excludeUrl: '([bad' },
+  ]);
+  assert.equal(rules.length, 2, 'the rule with a broken excludeUrl is dropped');
+  assert.deepEqual(O.matchingRules(rules, 'https://ex.com/list').map((r) => r.next), ['a.n', 'a.m']);
+  assert.deepEqual(O.matchingRules(rules, 'https://ex.com/search?q=1').map((r) => r.next), ['a.m']);
+});
+
+test('fittingRule: a rule is used only where its selectors find something', () => {
+  const d = dom('<div class="list"><div class="item">x</div></div><a class="m" href="/list/2">Next</a>');
+  const rules = [
+    { url: 'x', next: 'a.n', content: '.list > .item' },
+    { url: 'x', next: 'a.m', content: '.results > .row' },
+    { url: 'x', next: '//a[@class="m"]', content: '.list > .item' },
+  ];
+  assert.equal(O.fittingRule(rules, d), rules[2], 'next missing, then content missing, then a fit');
+  assert.equal(O.fittingRule(rules.slice(0, 2), d), null, 'nothing fits');
+  assert.equal(O.fittingRule([{ url: 'x', next: 'a.m' }], d).next, 'a.m', 'content is optional');
+});
+
 test('content hash spots a repeated page', () => {
   const a = dom(`<ul>${items(3)}</ul>`).querySelectorAll('li');
   const b = dom(`<ul>${items(3)}</ul>`).querySelectorAll('li');
