@@ -227,6 +227,20 @@ function route(url) {
     const list = n === 2 && hits.emptyonce[n] === 1 ? '' : posts(n);
     return { body: page('Empty once ' + n, `<ul class="posts">${list}</ul>${pager('/emptyonce?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/latepager') {
+    // Items in the HTML, but page 1 draws its pager a second after load.
+    const nav = pager('/latepager?page=', n, 'Next');
+    const drawn = n === 1 ? `<div id="nav"></div><script>setTimeout(() => { document.getElementById('nav').innerHTML = ${JSON.stringify(nav)}; }, 1000);</script>` : nav;
+    return { body: page('Late pager ' + n, `<ul class="posts">${posts(n)}</ul>${drawn}`) };
+  }
+  if (u.pathname === '/shadowlist') {
+    // The list lives in a web component's open shadow root, in a <ul> or (direct=1) straight in the root.
+    const inner = u.searchParams.get('direct') ? posts(n) : `<ul class="inner">${posts(n)}</ul>`;
+    const define = `<script>customElements.define('x-list', class extends HTMLElement {
+      connectedCallback() { if (!this.shadowRoot) this.attachShadow({ mode: 'open' }).innerHTML = ${JSON.stringify(inner)}; }
+    });</script>`;
+    return { body: page('Shadow list ' + n, `<x-list></x-list>${define}${pager('/shadowlist?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

@@ -28,7 +28,7 @@ test.after(async () => {
   server?.close();
 });
 
-async function open(url, prepare) {
+async function open(url, prepare, arg) {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
   const errors = [];
@@ -36,7 +36,7 @@ async function open(url, prepare) {
   pg.on('pageerror', (e) => errors.push(e.message));
   pg.on('console', (m) => logs.push(m.text()));
   await pg.goto(base + url, { waitUntil: 'load' });
-  if (prepare) await pg.evaluate(prepare);
+  if (prepare) await pg.evaluate(prepare, arg);
   await pg.addScriptTag({ content: SHIM + SCRIPT });
   return { pg, ctx, errors, logs };
 }
@@ -440,6 +440,27 @@ for (const step of [1, 2]) {
   });
 }
 
+const RULE = (next, content, url = '/') => ({ name: 'site', url: '^https?://127\\.0\\.0\\.1(:\\d+)?' + url, next, content, insert: '', mode: '', click: false, excludeUrl: '' });
+
+test('a site rule waits for a pager the page draws after its items', async () => {
+  const { pg, ctx, errors, logs } = await open('/latepager?page=1', (r) => { window.__gm = { rules: [r] }; }, RULE('.pagination a.next', 'ul.posts > li.post', '/latepager'));
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.ok(logs.some((l) => /active: rule/.test(l)), 'by the rule');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a site rule whose next link is missing here keeps its items and detection finds the link', async () => {
+  // Another section of the same site: the rule's list is here, its Next link isn't.
+  const { pg, ctx, errors, logs } = await open('/blog?page=1', (r) => { window.__gm = { rules: [r] }; }, RULE('a.nowhere', 'ul.posts > li.post'));
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.ok(logs.some((l) => /active: text/.test(l)), 'the next link came from detection');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('pending render retries do not start Onward under an open picker', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1', () => {
     window.__gm = { rules: [{ name: 'other layout', url: '^https?://127\\.0\\.0\\.1(:\\d+)?/', next: 'a.nowhere', content: '.nothing > li', insert: '', mode: '', click: false, excludeUrl: '' }] };
@@ -532,6 +553,70 @@ test('a Next link inside a shadow root is refused instead of saved as its host',
   assert.deepEqual(errors, []);
   await ctx.close();
 });
+
+test('clicking the page background as the item is refused, and Onward pages again', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  // Leave a strip at the left that only <html> covers.
+  await pg.evaluate(() => { document.body.style.marginLeft = '200px'; });
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  const next = pg.locator('.pagination a.next');
+  await next.scrollIntoViewIfNeeded();
+  const box = await next.boundingBox();
+  await pg.mouse.move(box.x + 3, box.y + 3);
+  await pg.mouse.click(box.x + 3, box.y + 3);
+  await pg.mouse.move(60, 300);
+  await pg.mouse.click(60, 300);
+  await pg.waitForTimeout(200);
+  assert.match(await pg.evaluate(onwardText), /doesn’t look like one item in a list/);
+  assert.deepEqual(await pg.evaluate(() => window.__gm.rules || []), [], 'nothing saved');
+  assert.ok(await scrollToEnd(pg, endBar), 'Onward pages to the end again');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('an error inside the picker is reported, and Onward pages again', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  const next = pg.locator('.pagination a.next');
+  await next.scrollIntoViewIfNeeded();
+  const box = await next.boundingBox();
+  await pg.mouse.move(box.x + 3, box.y + 3);
+  await pg.mouse.click(box.x + 3, box.y + 3);
+  // Building the item selector throws once.
+  await pg.evaluate(() => { const real = CSS.escape; CSS.escape = () => { CSS.escape = real; throw new Error('boom'); }; });
+  const item = pg.locator('li.post p').first();
+  await item.scrollIntoViewIfNeeded();
+  const ib = await item.boundingBox();
+  await pg.mouse.move(ib.x + 3, ib.y + 3);
+  await pg.mouse.click(ib.x + 3, ib.y + 3);
+  await pg.waitForTimeout(200);
+  assert.match(await pg.evaluate(onwardText), /The picker couldn’t use that: boom/);
+  assert.ok(await scrollToEnd(pg, endBar), 'Onward pages to the end again');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('cancelling the picker after "Run Onward here anyway" keeps it running', async () => {
+  const { pg, ctx, errors } = await open('/generator?page=1');
+  await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  await pg.getByRole('button', { name: 'Cancel' }).click();
+  assert.ok(await scrollToEnd(pg, endBar), 'still forced: pages to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+for (const direct of [false, true]) {
+  test(`an item picked inside a shadow root${direct ? ' (straight in the root)' : ''} is refused`, async () => {
+    const { pg, ctx, errors } = await open('/shadowlist?page=1' + (direct ? '&direct=1' : ''));
+    const rule = await pick(pg, pg.locator('.pagination a.next'), pg.locator('x-list li.post p').first());
+    assert.equal(rule, null, 'nothing saved');
+    assert.match(await pg.evaluate(onwardText), direct ? /doesn’t look like one item in a list/ : /Couldn’t build a rule that finds those items/);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
 
 test('a picked class that also marks Previous on later pages still pages forward', async () => {
   // Start at the bare address: Previous on page 2 points at ?page=1, which is not a URL already seen.

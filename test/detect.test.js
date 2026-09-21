@@ -236,7 +236,7 @@ test('fittingRule: a rule is used only where it works on the page', () => {
   assert.ok(O.fittingRule([{ url: 'x', mode: 'iframe' }], d, BASE), 'a mode-only rule fits');
 });
 
-test('chooseRule: site rules first, render retries, last page, then list rules', () => {
+test('chooseRule: site rules first, render retries, then list rules', () => {
   const href = 'https://example.com/list/';
   const page = dom('<ul class="posts"><li>a</li><li>b</li></ul><a class="next" href="/list/2">Next</a>');
   const noNext = dom('<ul class="posts"><li>a</li><li>b</li></ul>');
@@ -248,9 +248,40 @@ test('chooseRule: site rules first, render retries, last page, then list rules',
   assert.deepEqual(O.chooseRule([other], [list], href, blank, 0), { rule: null, wait: true }, 'not rendered yet: wait');
   assert.deepEqual(O.chooseRule([other], [list], href, page, 2), { rule: list }, 'after the retries, a list rule');
   assert.deepEqual(O.chooseRule([other], [], href, page, 2), { rule: null }, 'or detection');
-  assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 2), { rule: null, lastPage: true }, 'the rule\'s items but no next link: last page');
+  // Items first and the pager drawn later is common, so the retries come first;
+  // after them the rule still supplies the items and detection finds the next link.
+  assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 0), { rule: null, wait: true }, 'the rule\'s items but no next link yet: wait');
+  assert.deepEqual(O.chooseRule([fits], [list], href, noNext, 2), { rule: { ...fits, next: '', click: false }, mine: true }, 'then its items, with detection for the next link');
   const excluded = { ...fits, excludeUrl: '/list/' };
   assert.deepEqual(O.chooseRule([excluded], [list], href, page, 0), { rule: list }, 'an excluded site rule does not count');
+});
+
+test('a rule\'s next link is taken unless it really is Previous', () => {
+  const pick = (html, dir) => {
+    const d = dom(`<div${dir ? ' dir="rtl"' : ''}>${html}</div>`);
+    const r = O.findNext(d, BASE, { rule: { url: 'x', next: 'a.n, a.page-link' }, layout: false });
+    return r ? r.el.textContent || r.el.getAttribute('aria-label') || r.el.querySelector('img').alt : null;
+  };
+  // Found wrongly rejected in review: a Previous word later in the label.
+  for (const label of ['Next post: Backyard gardening', 'Next (last page)', 'Next: Prevention tips', 'Next: The first snow',
+    'Load more (last 10 days)', 'Página siguiente', 'Back to school deals']) {
+    assert.equal(pick(`<a class="n" href="/2">${label}</a>`), label, label);
+  }
+  assert.equal(pick('<a class="n" href="/2" title="Next. Use back to return">2</a>'), '2', 'a title that mentions back');
+  assert.equal(pick('<a class="n next" href="/2"><img alt="arrow-back"></a>'), 'arrow-back', 'an icon named back on a next-classed link');
+  assert.equal(pick('<a class="n" href="/1"><img alt="arrow-back"></a><a class="n" href="/3">Next</a>'), 'Next', 'with nothing saying next, that icon is Previous');
+  assert.equal(pick('<a class="pagination__prev-next page-link" href="/2">Next post: A</a>'), 'Next post: A', 'a class with both words');
+  // Previous in all its forms is still skipped; the real next link after it is taken.
+  for (const prev of ['« Previous', 'Prev', 'Página anterior', 'Page précédente', 'Newer posts »', 'First', 'Last »', 'Zurück', '上一页', '‹']) {
+    assert.equal(pick(`<a class="n" href="/1">${prev}</a><a class="n" href="/3">Next</a>`), 'Next', prev);
+  }
+  assert.equal(pick('<a class="page-link" aria-label="Go to the previous page" href="/1">1</a><a class="n" href="/3">3</a>'), '3', 'an aria-label that says previous');
+  assert.equal(pick('<a class="n prev" href="/1">Older</a>'), 'Older', 'a label that says next beats a prev class');
+  assert.equal(pick('<a class="n page-prev" href="/1">2</a><a class="n" href="/3">3</a>'), '3', 'a class that only says previous');
+  assert.equal(pick('<a class="n" rel="prev" href="/1">Next</a><a class="n" href="/3">3</a>'), '3', 'rel=prev wins over the label');
+  assert.equal(pick('<a class="n" href="/1">«</a><a class="n" href="/3">»</a>'), '»', 'a bare back arrow');
+  assert.equal(pick('<a class="n" href="/3">«</a>', true), '«', 'which points forward on a right-to-left page');
+  assert.equal(pick('<a class="n" href="/2">Entradas anteriores</a>'), 'Entradas anteriores', 'Spanish WordPress: older entries is next');
 });
 
 test('rules from a downloaded list never click; rules you write can', () => {

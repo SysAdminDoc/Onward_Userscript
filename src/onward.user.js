@@ -103,7 +103,13 @@
     'загрузить ещё', '加载更多', '載入更多', '查看更多', 'もっと見る', 'さらに表示', '더 보기', '더보기',
   ];
   const ARROWS = /^[\s>›»→⟩❯▶▸⇒⇨≫]+$/;
-  const PREV_RE = /\b(prev|previous|back|first|last|newer|précédent|precedente|zurück|vorherige|anterior|предыдущ|назад|попередн)|上一|上页|上頁|前へ|前の|前页|首页|首頁|尾页|尾頁|末页|末頁|最後|最初|이전|처음|마지막|[«‹←⟨❮◀]/i;
+  // Previous, First and Last as whole words ("Página anterior", "Newer posts",
+  // not "Prevention" or "Backyard"). WordPress puts "Newer posts" in .nav-next,
+  // and it leads back toward page 1.
+  const PREV_WORD_RE = /(^|[^a-z])(prev|previous|back|newer|first|last|précédente?|precedente|zurück|vorherige[nrs]?|anterior|предыдущ|назад|попередн)(?![a-z])|上一|上页|上頁|前へ|前の|前页|首页|首頁|尾页|尾頁|末页|末頁|最後|最初|이전|처음|마지막/i;
+  // A label that starts like this is a next link whatever follows: "Next (last page)".
+  const NEXT_START_RE = /^(?:(?:next|older|continue|more|load more|show more)(?![a-z])|suivant|weiter|nächste|siguiente|próxima|successiv|volgende|nästa|следующ|далее|下一|下页|下頁|次|다음)/i;
+  const BACK_ARROWS = /^[<«‹←⟨❮◀⇐⇦≪]+$/;
   // 下一页 / 下一頁 / 次ページ / 下一章 and friends
   const CJK_NEXT_RE = /^翻?[下后後次][一ー─1]?[页頁张張章话話节節篇]/;
   const NEXT_ATTR_RE = /(^|[^a-z])next([^a-z]|$)|nextpage|next_page|pagenext|page-next|pager-next|pagination-next|nav-next|pager-older/i;
@@ -223,9 +229,7 @@
     if (opts.rule && opts.rule.next) {
       for (const el of queryAll(doc, opts.rule.next)) {
         // The same classes often mark Previous on later pages; never take that.
-        const rel = (el.getAttribute('rel') || '').toLowerCase().split(/\s+/);
-        if (rel.includes('prev') || (!rel.includes('next') && (PREV_ATTR_RE.test(attrText(el))
-            || labelOf(el).some((t) => PREV_RE.test(stripDecor(t)) && !NEXT_SET.has(stripDecor(t)))))) continue;
+        if (looksPrevious(el)) continue;
         const u = acceptUrl(el.getAttribute('href') || el.getAttribute('value'));
         if (u) return { url: u, el, score: 1000, how: 'rule' };
         if (opts.rule.click && isVisible(el, layout)) return { url: null, el, score: 1000, how: 'rule-click' };
@@ -254,8 +258,7 @@
       const relNext = rel.includes('next');
       const longest = labels.reduce((m, s) => Math.max(m, s.length), 0);
       if (longest > 60 && !relNext) continue;
-      if (!relNext && labels.some((s) => PREV_RE.test(stripDecor(s)) && !NEXT_SET.has(stripDecor(s)))) continue;
-      if (!relNext && PREV_ATTR_RE.test(attrs)) continue;
+      if (looksPrevious(el, labels)) continue;
       if (isDisabledOrWidget(el, layout)) continue;
 
       let score = 0;
@@ -289,6 +292,30 @@
     if (numbered) consider(numbered);
 
     return best && best.score >= 40 ? best : null;
+  }
+
+  /**
+   * A Previous (or First/Last) control rather than a next one. The evidence is
+   * taken strongest first: rel, a label that starts like Next, a class that only
+   * says next, a short label with a Previous word (longer labels are usually a
+   * post's title and can say anything), a class that only says previous, and
+   * last a bare back arrow (which points forward on right-to-left pages).
+   */
+  function looksPrevious(el, raw) {
+    const rel = (el.getAttribute('rel') || '').toLowerCase().split(/\s+/);
+    if (rel.includes('prev')) return true;
+    if (rel.includes('next')) return false;
+    raw = raw || labelOf(el);
+    const labels = raw.map(stripDecor).filter(Boolean);
+    if (labels.some((t) => NEXT_SET.has(t) || MORE_SET.has(t) || NEXT_START_RE.test(t) || CJK_NEXT_RE.test(t))) return false;
+    const attrs = attrText(el);
+    const prevAttr = PREV_ATTR_RE.test(attrs);
+    const nextAttr = NEXT_ATTR_RE.test(attrs);
+    if (nextAttr && !prevAttr) return false;
+    if (labels.some((t) => t.split(' ').length <= 3 && PREV_WORD_RE.test(t))) return true;
+    if (prevAttr && !nextAttr) return true;
+    const dir = el.closest('[dir]');
+    return !(dir && /^rtl$/i.test(dir.getAttribute('dir'))) && raw.some((t) => BACK_ARROWS.test(t));
   }
 
   function isDisabledOrWidget(el, layout) {
@@ -728,16 +755,18 @@
 
   /**
    * Which rule to use here. { rule } normally; { wait } when a site rule
-   * matches the address but not the page yet (probably still rendering);
-   * { lastPage } when a site rule's items are there but its next link isn't,
-   * so the site's last page is not handed to detection the rule overrides.
+   * matches the address but not the page yet (probably still rendering).
+   * Once the retries are spent, a site rule whose items are on the page but
+   * whose next link isn't (a last page, or another section of the same site)
+   * still supplies the items, and detection looks for the next link.
    */
   function chooseRule(userRules, listRules, href, doc, attempt) {
     const mine = matchingRules(userRules, href);
     const rule = fittingRule(mine, doc, href);
     if (rule) return { rule, mine: true };
-    if (mine.some((r) => r.content && queryAll(doc, r.content).length > 0)) return { rule: null, lastPage: true };
     if (mine.length && attempt < 2) return { rule: null, wait: true };
+    const byContent = mine.find((r) => r.content && queryAll(doc, r.content).length > 0);
+    if (byContent) return { rule: Object.assign({}, byContent, { next: '', click: false }), mine: true };
     // Lists cached before list rules lost their clicks are held to the same rule here.
     const lists = matchingRules(listRules, href).map((r) => (r.click ? Object.assign({}, r, { click: false }) : r));
     return { rule: fittingRule(lists, doc, href) };
@@ -1715,11 +1744,19 @@
   }
 
   async function runPicker(app) {
+    const opts = app.opts;
     app.picking = true;
-    try { await pickRule(app); } finally { app.picking = false; }
-    // Saved, refused or cancelled: Onward starts again either way (a start is
-    // refused while picking, so this has to come after the flag drops).
-    app.restart();
+    try {
+      await pickRule(app);
+    } catch (e) {
+      console.warn(TAG, 'picker failed', e);
+      toast('The picker couldn’t use that: ' + e.message, 'err');
+    } finally {
+      app.picking = false;
+    }
+    // Saved, refused, cancelled or failed: Onward starts again as it was running
+    // (a start is refused while picking, so this has to come after the flag drops).
+    app.restart(opts);
   }
 
   async function pickRule(app) {
@@ -1739,8 +1776,13 @@
       if (sibs.length >= 2) break;
       item = item.parentElement;
     }
+    const parent = item.parentElement;
+    if (!parent || item === document.body || parent === document.documentElement) {
+      toast('That doesn’t look like one item in a list. Click a single result or post.', 'err');
+      return;
+    }
     const sig = signature(item);
-    const container = cssPath(item.parentElement);
+    const container = cssPath(parent);
     const itemSel = sig.split('.').map((p, i) => (i === 0 ? p.toLowerCase() : '.' + CSS.escape(p))).join('');
     const rule = {
       name: location.hostname,
@@ -1751,10 +1793,15 @@
       click: !nextEl.getAttribute('href') || JUNK_HREF_RE.test(nextEl.getAttribute('href')),
     };
     // The rule has to lead back to the element that was clicked, or it would
-    // quietly page somewhere else (a class path shared by every pager link).
+    // quietly page somewhere else (a class path shared by every pager link),
+    // and its item selector has to find the item that was clicked.
     const check = rule.next && findNext(document, location.href, { rule });
     if (!check || check.el !== nextEl) {
       toast('Couldn’t build a rule that finds that link. Write one in Settings instead.', 'err');
+      return;
+    }
+    if (!queryAll(document, rule.content).includes(item)) {
+      toast('Couldn’t build a rule that finds those items. Write one in Settings instead.', 'err');
       return;
     }
     const rules = store.get('rules').filter((r) => r.url !== rule.url);
@@ -1793,6 +1840,7 @@
       tryStart(attempt, opts) {
         opts = opts || {};
         if (this.picking || this.pager) return;
+        this.opts = opts;
         const s = loadSettings();
         const host = location.hostname;
         if (s.disabledHosts.includes(host)) { this.status = 'disabled on this site'; return; }
@@ -1806,7 +1854,6 @@
         // rule, then detection. A site rule still rendering gets the retries first.
         const choice = chooseRule(s.rules, s.sourceRules, location.href, document, attempt);
         if (choice.wait) { this.status = 'waiting for the page to render'; return retry(); }
-        if (choice.lastPage) { this.status = 'last page (by your site rule)'; return; }
         const rule = choice.rule;
         const userRule = !!choice.mine;
         // A rule the user wrote or picked means they want paging here.
