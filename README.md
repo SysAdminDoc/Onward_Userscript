@@ -92,6 +92,8 @@ At the bottom of the panel, Diagnostics shows what Onward found on the page you'
 
 ## Development
 
+The tests need Node 22.22.2 or later on the 22 line, 24.15 or later on the 24 line, or 26 and up (what jsdom 30 supports).
+
 ```powershell
 npm install
 npm test          # detection unit tests (jsdom)

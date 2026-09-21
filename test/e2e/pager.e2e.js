@@ -12,9 +12,24 @@ const SCRIPT = fs.readFileSync(path.join(__dirname, '../../src/onward.user.js'),
 // tests don't change: the page world reaches the script through DOM events and
 // attributes, the only things both worlds share.
 const WORLD = process.env.ONWARD_WORLD === 'isolated' ? 'isolated' : 'main';
+// Menu commands, which the page's world reaches by an onward-test-menu event
+// when the script runs isolated. Their names are mirrored to
+// data-onward-test-menu and an error one throws to data-onward-test-menu-error,
+// so the page world's bridge can act just like a direct call.
+const MENU_SHIM = `
+  window.__menu = {};
+  window.GM_registerMenuCommand = (name, fn) => {
+    window.__menu[name] = fn;
+    document.documentElement.setAttribute('data-onward-test-menu', JSON.stringify(Object.keys(window.__menu)));
+  };
+  document.addEventListener('onward-test-menu', (e) => {
+    const root = document.documentElement;
+    root.removeAttribute('data-onward-test-menu-error');
+    try { window.__menu[e.detail](); } catch (err) { root.setAttribute('data-onward-test-menu-error', String((err && err.message) || err)); }
+  });
+`;
 // GM storage in window.__gm, seeded from the page world's window.__gm, with
 // writes mirrored to data-onward-test-gm and reads counted in data-onward-test-reads.
-// Menu commands also answer an onward-test-menu event.
 const SHIM = `(() => {
   const root = document.documentElement;
   const seeded = root.getAttribute('data-onward-test-gm');
@@ -26,16 +41,24 @@ const SHIM = `(() => {
     return k in window.__gm ? window.__gm[k] : d;
   };
   window.GM_setValue = (k, v) => { window.__gm[k] = v; root.setAttribute('data-onward-test-gm', JSON.stringify(window.__gm)); };
-  window.__menu = {};
-  window.GM_registerMenuCommand = (name, fn) => { window.__menu[name] = fn; };
-  document.addEventListener('onward-test-menu', (e) => { const fn = window.__menu[e.detail]; if (fn) fn(); });
+  ${MENU_SHIM}
 })();
 `;
-// In the page world when the script runs isolated: window.__gm reads the mirror, and window.__menu[name]() sends the event.
+// In the page world when the script runs isolated: window.__gm reads the mirror,
+// and window.__menu[name]() sends the event. Like a direct call, a name that
+// isn't registered is no function, and a command that throws throws here.
 const BRIDGE = `(() => {
   const root = document.documentElement;
   Object.defineProperty(window, '__gm', { configurable: true, get: () => JSON.parse(root.getAttribute('data-onward-test-gm') || '{}') });
-  window.__menu = new Proxy({}, { get: (_, name) => () => document.dispatchEvent(new CustomEvent('onward-test-menu', { detail: String(name) })) });
+  window.__menu = new Proxy({}, { get: (_, name) => {
+    if (!JSON.parse(root.getAttribute('data-onward-test-menu') || '[]').includes(String(name))) return undefined;
+    return () => {
+      document.dispatchEvent(new CustomEvent('onward-test-menu', { detail: String(name) }));
+      const err = root.getAttribute('data-onward-test-menu-error');
+      root.removeAttribute('data-onward-test-menu-error');
+      if (err !== null) throw new Error(err);
+    };
+  } });
 })()`;
 
 /**
@@ -49,7 +72,8 @@ async function inject(pg, shim = SHIM) {
   await pg.evaluate(BRIDGE);
   const cdp = await pg.context().newCDPSession(pg);
   const { frameTree } = await cdp.send('Page.getFrameTree');
-  const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'onward-e2e', grantUniveralAccess: true });
+  // No grantUniveralAccess: no manager gives a script that.
+  const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'onward-e2e' });
   const r = await cdp.send('Runtime.evaluate', { expression: shim + SCRIPT, contextId: executionContextId });
   if (r.exceptionDetails) throw new Error('the script failed in the isolated world: ' + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text));
   pg.onwardWorld = { cdp, contextId: executionContextId };
@@ -118,6 +142,16 @@ test('the script runs in the world the run says', async () => {
   // Its console messages reach the test once, from either world.
   await pg.waitForTimeout(300);
   assert.equal(logs.filter((l) => /\[Onward\] active:/.test(l)).length, 1);
+  await ctx.close();
+});
+
+test('menu commands act the same from either world: an unknown name is no function, and a command that throws throws', async () => {
+  const { pg, ctx } = await open('/blog?page=1');
+  assert.equal(await pg.evaluate(() => typeof window.__menu['Setings']), 'undefined');
+  await assert.rejects(pg.evaluate(() => window.__menu['Setings']()), /not a function/);
+  // Where the script runs, Settings can't make its shadow root.
+  await inScriptWorld(pg, () => { Element.prototype.attachShadow = () => { throw new Error('no shadow roots here'); }; });
+  await assert.rejects(pg.evaluate(() => window.__menu['Settings']()), /no shadow roots here/);
   await ctx.close();
 });
 
@@ -1387,9 +1421,7 @@ const SHARED_SHIM = `
   const gmLoad = () => JSON.parse(localStorage.getItem('__gm') || '{}');
   window.GM_getValue = (k, d) => { const v = gmLoad(); return k in v ? v[k] : d; };
   window.GM_setValue = (k, v) => { const all = gmLoad(); all[k] = v; localStorage.setItem('__gm', JSON.stringify(all)); };
-  window.__menu = {};
-  window.GM_registerMenuCommand = (name, fn) => { window.__menu[name] = fn; };
-  document.addEventListener('onward-test-menu', (e) => { const fn = window.__menu[e.detail]; if (fn) fn(); });
+  ${MENU_SHIM}
 `;
 
 test('only one tab refreshes the rule lists at a time', async () => {
