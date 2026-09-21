@@ -400,6 +400,27 @@ test('a saved rule whose selectors miss this page gives way to detection', async
   await ctx.close();
 });
 
+for (const step of [1, 2]) {
+  test(`cancelling the picker at step ${step} puts Onward back`, async () => {
+    const { pg, ctx, errors } = await open('/blog?page=1');
+    await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+    if (step === 2) {
+      const next = pg.locator('.pagination a.next');
+      await next.scrollIntoViewIfNeeded();
+      const box = await next.boundingBox();
+      await pg.mouse.move(box.x + 3, box.y + 3);
+      await pg.mouse.click(box.x + 3, box.y + 3);
+    }
+    // The picker's tip lives in an open shadow root; Playwright's locators reach into it.
+    await pg.getByRole('button', { name: 'Cancel' }).click();
+    assert.ok(await scrollToEnd(pg, endBar), 'Onward pages to the end again');
+    assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+    assert.deepEqual(await pg.evaluate(() => window.__gm.rules || []), [], 'nothing was saved');
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
 test('the picker refuses a rule that would not lead back to the clicked link', async () => {
   // "Next" goes to another site, which Onward never follows, so no rule can work.
   const { pg, ctx, errors } = await open('/bs?page=2&ext=1');

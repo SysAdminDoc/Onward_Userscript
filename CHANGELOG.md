@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Cancelling the picker puts Onward back to work on the page. Before, it stayed off until you reloaded.
 - A site rule is only used on pages where its selectors find something. Elsewhere on the same site Onward goes back to finding the next page itself, instead of doing nothing. Rules also honour `excludeUrl`, as AutoPagerize rules do.
 - Scrolling into the footer no longer loads every page at once. New items now appear where the footer was, and the next page waits until you scroll again.
 - Turning Onward off, picking a new rule, or a site navigating while a page is still loading now cancels that load cleanly. Before, the old load could finish into a detached list and leave a "failed" bar behind.

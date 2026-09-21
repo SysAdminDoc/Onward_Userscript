@@ -1446,10 +1446,11 @@
     // Hold the page still while the user points at things.
     if (app.pager) { app.pager.destroy(); app.pager = null; }
     let nextEl = await pickElement('Click the “Next page” link or “Load more” button.');
-    if (!nextEl) return;
+    // Cancel puts Onward back the way it was.
+    if (!nextEl) return app.restart();
     nextEl = nextEl.closest('a, button, [role="button"], input') || nextEl;
     const itemEl = await pickElement('Now click one result, post or product in the list.');
-    if (!itemEl) return;
+    if (!itemEl) return app.restart();
     // Climb to the level where the item has same-looking siblings.
     let item = itemEl;
     while (item.parentElement && item.parentElement !== document.body) {
