@@ -1945,6 +1945,27 @@ test('right after an update from 0.1.0, the rule lists are fetched again so thei
   assert.equal(site.hits.rules, 1, 'fetched now, once');
   assert.equal(typeof stored.sourceCache[list].rules, 'string', 'stored packed');
   assert.deepEqual(stored.sourceRules, [], 'the flattened copy is gone');
+  assert.equal(stored.sourcesFormat, 2, 'and marked as stored the current way');
+  await ctx.close();
+});
+
+test('a page that uses no rule list never reads the stored lists, and a changed list is fetched next time', async () => {
+  const { pg, ctx } = await open('/blog?page=1', (b) => {
+    const list = b + '/rules.json?mode=good';
+    window.__gm = {
+      exclude: ['127.0.0.1'], sources: [list], sourcesFormat: 2, sourcesTried: Date.now() - 7 * 36e5, sourcesUpdated: Date.now() - 864e5,
+      sourceCache: { [list]: { at: 1, count: 1, hosts: '\nkeep1.example 0\n', generic: [], rules: 'j:[{"url":"^https://keep1\\\\.example/","next":"a.n"}]', general: 'j:[]' } },
+    };
+  }, base);
+  await pg.waitForTimeout(1500);
+  const reads = await pg.evaluate(() => JSON.parse(document.documentElement.getAttribute('data-onward-test-reads') || '{}'));
+  assert.equal(reads.sourceCache || 0, 0, 'read the lists: ' + JSON.stringify(reads));
+  // Another list in Settings: the refresh clock starts over.
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  const box = pg.getByRole('textbox', { name: 'Rule list URLs' });
+  await box.fill((await box.inputValue()) + '\n' + base + '/rules.json?mode=good&k=2');
+  await pg.getByRole('button', { name: 'Save' }).click();
+  assert.deepEqual(await pg.evaluate(() => [window.__gm.sourcesUpdated, window.__gm.sourcesTried]), [0, 0]);
   await ctx.close();
 });
 

@@ -65,7 +65,11 @@
     sourcesUpdated: 0,     // last time every source updated cleanly
     sourcesTried: 0,       // last refresh attempt, to back off after failures
     sourcesLock: 0,        // { at, id } of the tab refreshing right now (expires after a minute)
+    sourcesFormat: 0,      // the LIST_FORMAT the lists were last all stored in (0: 0.1.0's, or never)
   };
+  // How rule lists are stored now: packed, indexed by host, general rules apart.
+  // An older form is refreshed on the next page load instead of a week later.
+  const LIST_FORMAT = 2;
 
   const store = {
     get(key) {
@@ -2163,7 +2167,13 @@
       if (hostLoadSel.value) hostLoad[location.hostname] = hostLoadSel.value;
       else delete hostLoad[location.hostname];
       store.set('hostLoadPages', hostLoad);
-      store.set('sources', srcs.value.split(/\s+/).filter(Boolean));
+      const sources = srcs.value.split(/\s+/).filter(Boolean);
+      // A changed list of lists is fetched on the next page load.
+      if (sources.join('\n') !== s.sources.join('\n')) {
+        store.set('sourcesUpdated', 0);
+        store.set('sourcesTried', 0);
+      }
+      store.set('sources', sources);
       close();
       toast('Settings saved. Reload the page to apply them.', 'ok');
     };
@@ -2449,11 +2459,6 @@
     const { cache, legacy } = readLists();
     return candidateRules(cache, legacy, store.get('sources') || [], href);
   }
-  /** Some list is only in a form an earlier version stored (or not stored at all): its index isn't there to use yet. */
-  function listsOutdated(sources) {
-    const { cache } = readLists();
-    return sources.some((u) => !cache[u] || typeof cache[u].rules !== 'string');
-  }
   function forgetListRules() {
     listStore = null;
     unpacked.clear();
@@ -2556,7 +2561,10 @@
       store.set('sourceCache', cache);
       // 0.1.0 kept every list's rules flattened. That copy goes once every list
       // has a packed one, and not before: a failed refresh must not lose them.
-      if (urls.every((u) => cache[u] && typeof cache[u].rules === 'string')) store.set('sourceRules', []);
+      if (urls.every((u) => cache[u] && typeof cache[u].rules === 'string')) {
+        store.set('sourceRules', []);
+        store.set('sourcesFormat', LIST_FORMAT);
+      }
       forgetListRules();
       if (failures.length) toast('Kept the last good copy of a rule list. ' + failures.join('; '), 'err');
       else store.set('sourcesUpdated', Date.now());
@@ -2883,10 +2891,10 @@
     // Refresh rule lists weekly, in the background.
     const s = loadSettings();
     // Weekly, and after a failed refresh no more often than every 6 hours. Right
-    // away when a list isn't stored the way this version reads it fastest (just
-    // updated from 0.1.0, or a list added since).
+    // away when the lists were stored by an earlier version (0.1.0), without
+    // reading them: some managers hand a script its whole storage per read.
     if (s.sources.length && Date.now() - s.sourcesTried > 6 * 36e5
-        && (Date.now() - s.sourcesUpdated > 7 * 864e5 || listsOutdated(s.sources))) updateSources(s.sources, false);
+        && (Date.now() - s.sourcesUpdated > 7 * 864e5 || s.sourcesFormat !== LIST_FORMAT)) updateSources(s.sources, false);
 
     // The AutoPagerize API: other scripts can pause paging and start it again.
     const setPaging = (on) => {
