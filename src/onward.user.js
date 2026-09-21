@@ -2285,6 +2285,12 @@
    */
   function literalHosts(pattern) {
     let s = pattern.replace(/\\\//g, '/').replace(/^\^/, '');
+    // Alternatives at the top (^https://a\.com/|^https://b\.com/) can match either host.
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === '\\') { i++; continue; }
+      if (s[i] === '(' || s[i] === '[') { i = skipGroup(s, i); continue; }
+      if (s[i] === '|') return null;
+    }
     const m = /^https?(\?|\[s\]\?)?:\/\//i.exec(s);
     if (!m) return null;
     s = s.slice(m[0].length);
@@ -2302,8 +2308,14 @@
       if (c === '(') {
         const end = skipGroup(s, i);
         const body = s.slice(i + 1, end).replace(/^\?:/, '');
-        if (/^(\/|\$)/.test(body)) { pinned = pinsHostEnd(s.slice(i)); break; } // (?:/|$) starts the path
         const alts = body.split('|');
+        // (?:/|$) starts the path; a group that may also go on with the host ((/|\.cn/)) can't be indexed.
+        const toPath = alts.filter((a) => /^(\/|\$)/.test(a)).length;
+        if (toPath) {
+          if (toPath < alts.length) return null;
+          pinned = pinsHostEnd(s.slice(i));
+          break;
+        }
         if (alts.some((a) => !/^([a-z0-9-]|\\\.|\.)*$/i.test(a))) return null;
         const opts = alts.map((a) => a.replace(/\\\./g, '.').toLowerCase());
         let j = end + 1;

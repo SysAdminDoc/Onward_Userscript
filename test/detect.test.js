@@ -316,6 +316,15 @@ test('a rule whose pattern stops inside the host is not indexed by a shorter hos
   // A "/" that can be left out doesn't pin it, unless something required follows.
   for (const url of ['https://onejav.com/*', '^https?://ukdata\\.blog38\\.fc2\\.com(/page-[\\d]+\\.html)?', '^https://(?:www\\.)?mysku\\.ru(?:/index/page\\d+/)?']) assert.equal(O.literalHosts(url), null, url);
   assert.deepEqual(O.literalHosts('^https?://example\\.com/?(?:/|$)'), ['example.com']);
+  // A group that may start the path or go on with the host, and alternatives at the top: no one host.
+  const mixed = ['^https?://(www\\.)?zcool\\.com(/|\\.cn/)', '^https://a\\.example\\.com/|^https://b\\.example\\.org/'];
+  for (const url of mixed) assert.equal(O.literalHosts(url), null, url);
+  const mixedRules = O.normalizeRules(mixed.map((url) => ({ url, next: 'a.next', content: '.item' })), { fromList: true });
+  O.forgetListRules();
+  const mixedCache = { list: await O.buildListEntry(mixedRules, 1) };
+  for (const [url, href] of [[mixed[0], 'https://www.zcool.com.cn/x'], [mixed[0], 'https://zcool.com/x'], [mixed[1], 'https://b.example.org/p/2']]) {
+    assert.ok(O.matchingRules(await O.listRulesFor(mixedCache, href), href).some((r) => r.url === url), url + ' at ' + href);
+  }
   const rules = O.normalizeRules(cases.map(([url]) => ({ url, next: 'a.next', content: '.item' })), { fromList: true });
   O.forgetListRules();
   const cache = { list: await O.buildListEntry(rules, 1) };
