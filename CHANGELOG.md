@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Repeats are now caught item by item. An item you've already seen on an earlier page (a product that moved, a pinned post) is left out, and paging only ends when a page is almost all repeats. Before, only the first 5,000 characters of a whole page were compared, so a long post repeated at the top of every page could end paging early.
 - When a site answers a page past the end by redirecting back to a page you already have (common on WordPress), Onward now stops there instead of adding that page again.
 - A page that never answers now gives up after 20 seconds and pauses with a Retry button, instead of showing "Loading page N" forever.
 - Stop can be undone. After you press it, the page bars show Resume, and "Load next page now" also picks up where you stopped. The menu now says whether paging was stopped by you, paused after an error, or reached the last page, instead of always saying "No more pages".

@@ -190,12 +190,27 @@ test('fittingRule: a rule is used only where its selectors find something', () =
   assert.equal(O.fittingRule([{ url: 'x', next: 'a.m' }], d).next, 'a.m', 'content is optional');
 });
 
-test('content hash spots a repeated page', () => {
-  const a = dom(`<ul>${items(3)}</ul>`).querySelectorAll('li');
-  const b = dom(`<ul>${items(3)}</ul>`).querySelectorAll('li');
-  const c = dom(`<ul>${items(3, 'post', 4)}</ul>`).querySelectorAll('li');
-  assert.equal(O.contentHash([...a]), O.contentHash([...b]));
-  assert.notEqual(O.contentHash([...a]), O.contentHash([...c]));
+test('item keys: same item, same key; different item or picture, different key', () => {
+  const a = [...dom(`<ul>${items(3)}</ul>`).querySelectorAll('li')];
+  const b = [...dom(`<ul>${items(3)}</ul>`).querySelectorAll('li')];
+  const c = [...dom(`<ul>${items(3, 'post', 4)}</ul>`).querySelectorAll('li')];
+  assert.deepEqual(a.map(O.itemKey), b.map(O.itemKey));
+  assert.equal(new Set([...a, ...c].map(O.itemKey)).size, 6);
+  // Text-free picture items differ by their image.
+  const pics = [...dom('<ul><li><img src="/a.jpg"></li><li><img src="/b.jpg"></li></ul>').querySelectorAll('li')];
+  assert.notEqual(O.itemKey(pics[0]), O.itemKey(pics[1]));
+});
+
+test('repeats: a long first post on every page does not end paging', () => {
+  const long = 'A long opening post that every page repeats. '.repeat(140); // about 6,300 characters
+  const page = (start) => dom(`<ul><li class="post"><p>${long}</p></li>${items(4, 'post', start)}</ul>`).querySelectorAll('ul > li');
+  const seen = new Set([...page(1)].map(O.itemKey));
+  const second = O.splitRepeats([...page(5)], seen);
+  assert.equal(second.fresh.length, 4, 'only the repeated first post is dropped');
+  assert.ok(second.repeatShare < 0.9, 'page 2 keeps paging');
+  const again = O.splitRepeats([...page(1)], seen);
+  assert.equal(again.fresh.length, 0, 'the same page again is all repeats');
+  assert.equal(again.repeatShare, 1);
 });
 
 test('page bar wrapper matches the list type', () => {

@@ -596,11 +596,24 @@
     return new DOMParser().parseFromString(input, 'text/html');
   }
 
-  function contentHash(items) {
-    let h = 0;
-    const s = items.map((i) => normalize(i.textContent)).join('|').slice(0, 5000);
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return h + ':' + items.length;
+  /**
+   * One item's identity: all of its text plus its first link and image, so
+   * picture-only items don't all look alike. Read before prepareItems()
+   * rewrites URLs, so every page is keyed the same way.
+   */
+  function itemKey(el) {
+    const a = el.matches('a[href]') ? el : el.querySelector('a[href]');
+    const img = el.matches('img[src]') ? el : el.querySelector('img[src]');
+    const s = normalize(el.textContent) + '|' + (a ? a.getAttribute('href') : '') + '|' + (img ? img.getAttribute('src') : '');
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(36) + ':' + s.length;
+  }
+
+  /** Items not seen on earlier pages, and the share that were. */
+  function splitRepeats(items, seenKeys) {
+    const fresh = items.filter((it) => !seenKeys.has(itemKey(it)));
+    return { fresh, repeatShare: items.length ? 1 - fresh.length / items.length : 1 };
   }
 
   // ---------------------------------------------------------------------------
@@ -850,7 +863,7 @@
       this.stopped = false;
       this.failures = 0;
       this.seen = new Set([stripHash(location.href)]);
-      this.hashes = new Set();
+      this.itemKeys = new Set();  // every item shown so far, to catch repeats
       this.separators = [];
       this.inserted = [];  // nodes we added, so destroy() can take them back out
       this.ours = new WeakSet();
@@ -871,7 +884,7 @@
       this.container = content.container;
       this.path = describePath(content.container);
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
-      this.hashes.add(contentHash(content.items));
+      for (const it of content.items) this.itemKeys.add(itemKey(it));
       this.buttonMode = next.url === null;
       // Anchor: new pages go right after the last current item.
       const last = content.items[content.items.length - 1];
@@ -1150,11 +1163,13 @@
         const next = this.findNextIn(doc, finalUrl);
         const items = extractItems(doc, this, next && next.el);
         if (!items.length) throw new Error('no content found on the next page');
-        const hash = contentHash(items);
-        if (this.hashes.has(hash)) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
-        this.hashes.add(hash);
+        // A page that is (nearly) all repeats is the site sending the same page
+        // again; a few repeats (products that moved) are just dropped.
+        const { fresh, repeatShare } = splitRepeats(items, this.itemKeys);
+        if (!fresh.length || repeatShare >= 0.9) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
+        for (const it of fresh) this.itemKeys.add(itemKey(it));
 
-        const prepared = prepareItems(items, finalUrl);
+        const prepared = prepareItems(fresh, finalUrl);
         const frag = document.createDocumentFragment();
         for (const it of prepared) frag.appendChild(document.importNode(it, true));
         this.page++;
@@ -1663,6 +1678,6 @@
 
   return {
     VERSION, boot, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, contentHash, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, itemKey, splitRepeats, signature, barTag,
   };
 });

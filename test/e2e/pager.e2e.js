@@ -554,6 +554,15 @@ test('Stop becomes Resume, and the menu tells stopped, paused and finished apart
   await ctx.close();
 });
 
+test('an item repeated from an earlier page is dropped, and paging goes on', async () => {
+  const { pg, ctx, errors } = await open('/shift?page=1');
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  const posts = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent));
+  assert.deepEqual(posts, Array.from({ length: site.PER * site.LAST }, (_, i) => 'Post ' + (i + 1)), 'every post once, in order');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a redirect back to a page already shown ends paging', async () => {
   const { pg, ctx, errors } = await open('/redir?page=1');
   assert.ok(await scrollToEnd(pg, endBar), 'paging ended');

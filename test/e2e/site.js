@@ -131,6 +131,11 @@ function route(url) {
       ${n < LAST ? item('Next', u.searchParams.has('ext') ? `https://elsewhere.example/bs?page=${n + 1}` : `/bs?page=${n + 1}`) : item('Next', '#', ' disabled')}</ul></nav>`;
     return { body: page('Bootstrap ' + n, `<main><ul class="posts">${posts(n)}</ul>${nav}</main>`) };
   }
+  if (u.pathname === '/shift') {
+    // Each page starts with the last post of the page before it, as lists do when items shift.
+    const prev = n > 1 ? posts(n - 1).split('</li>').filter(Boolean).at(-1) + '</li>' : '';
+    return { body: page('Shift ' + n, `<ul class="posts">${prev}${posts(n)}</ul>${pager('/shift?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/redir') {
     // Like a WordPress /page/N past the end: page 3 redirects back to page 1.
     if (n === 3) return { status: 302, location: '/redir?page=1', body: '' };
