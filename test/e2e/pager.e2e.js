@@ -1602,6 +1602,70 @@ test('announcements take turns between the two regions, and toasts are announced
   await ctx.close();
 });
 
+// Text in Onward's bars and panel whose contrast is under WCAG AA, against what is
+// really behind it: every background from the page down (gradients at their
+// worst stop, translucent layers blended), across shadow roots.
+const lowContrastText = (selector) => {
+  const rgba = (c) => { const n = (c.match(/[\d.]+/g) || []).map(Number); return n.length >= 3 ? [n[0], n[1], n[2], n.length > 3 ? n[3] : 1] : null; };
+  const lum = (c) => c.slice(0, 3).map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+  const ratio = (x, y) => { const [a, b] = [lum(x), lum(y)]; return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+  const over = (top, under) => top.slice(0, 3).map((v, i) => v * top[3] + under[i] * (1 - top[3]));
+  const chain = (el) => { const out = []; for (let n = el; n && n.nodeType === 1; n = n.parentElement || (n.getRootNode().host || null)) out.unshift(n); return out; };
+  const low = [];
+  const roots = Array.from(document.querySelectorAll('[data-onward], [data-onward-panel]')).map((h) => h.shadowRoot).filter(Boolean);
+  for (const root of roots) {
+    for (const el of root.querySelectorAll(selector)) {
+      if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent.trim()) || !el.getClientRects().length) continue;
+      // Each background from the page down, as the possible colours at that point.
+      let backs = [[255, 255, 255]];
+      for (const n of chain(el)) {
+        const cs = getComputedStyle(n);
+        const layers = [];
+        const own = rgba(cs.backgroundColor);
+        if (own && own[3] > 0) layers.push([own]);
+        const stops = (cs.backgroundImage.match(/rgba?\([^)]*\)/g) || []).map(rgba).filter(Boolean);
+        if (stops.length) layers.push(stops);
+        for (const choices of layers) backs = backs.flatMap((b) => choices.map((c) => over(c, b)));
+      }
+      const fg = rgba(getComputedStyle(el).color);
+      const worst = Math.min(...backs.map((b) => ratio(over(fg, b), b)));
+      if (worst < 4.5) low.push(`${el.tagName.toLowerCase()}.${el.className} "${el.textContent.trim().slice(0, 20)}" ${worst.toFixed(2)}`);
+    }
+  }
+  return low;
+};
+
+test('page bars are readable in the light and the dark scheme, and panel fields have visible edges', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  assert.ok(await scrollToEnd(pg, endBar), 'page bars and the end bar');
+  // An error bar too.
+  const fl = await open('/flaky?page=1');
+  assert.ok(await scrollToEnd(fl.pg, () => /failed/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 40));
+  for (const scheme of ['light', 'dark']) {
+    for (const p of [pg, fl.pg]) {
+      await p.emulateMedia({ colorScheme: scheme });
+      // Buttons ease their background over 120 ms; measure the settled colours.
+      await p.waitForTimeout(300);
+      assert.deepEqual(await p.evaluate(lowContrastText, '.bar *'), [], scheme);
+    }
+  }
+  // Field edges (WCAG 1.4.11): at least 3:1 against the panel.
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  const edges = await pg.evaluate(() => {
+    const lum = (c) => (c.match(/[\d.]+/g) || []).slice(0, 3).map(Number).map((v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0);
+    const sr = document.querySelector('[data-onward-panel]').shadowRoot;
+    const panel = lum(getComputedStyle(sr.querySelector('.p')).backgroundColor);
+    return Array.from(sr.querySelectorAll('input, select, textarea'), (el) => {
+      const e = lum(getComputedStyle(el).borderTopColor);
+      return (Math.max(e, panel) + 0.05) / (Math.min(e, panel) + 0.05);
+    });
+  });
+  assert.ok(edges.length > 5 && edges.every((r) => r >= 3), edges.map((r) => r.toFixed(2)).join(' '));
+  assert.deepEqual(errors, []);
+  await fl.ctx.close();
+  await ctx.close();
+});
+
 test('the settings panel passes axe, and focus goes in and comes back', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1');
   await pg.evaluate(() => document.querySelector('a[href="/post/1"]').focus());
