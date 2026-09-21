@@ -80,6 +80,10 @@ function route(url) {
           setTimeout(() => { document.getElementById('list').insertAdjacentHTML('beforeend', more.shift()); busy = false; }, 100);
         });</script>`, `<link rel="next" href="/selfscroll?page=${n + 1}">`) };
   }
+  if (u.pathname === '/slow') {
+    // Pages after the first take 2 s, so a test can act while one is in flight.
+    return { body: page('Slow ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/slow?page=', n, 'Next')}`), delay: n > 1 ? 2000 : 0 };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };
@@ -117,8 +121,12 @@ function start() {
   const server = http.createServer((req, res) => {
     const r = route(req.url);
     if (!r) { res.writeHead(404); res.end('nope'); return; }
-    res.writeHead(r.status || 200, { 'content-type': r.type || 'text/html; charset=utf-8' });
-    res.end(r.body);
+    const send = () => {
+      res.writeHead(r.status || 200, { 'content-type': r.type || 'text/html; charset=utf-8' });
+      res.end(r.body);
+    };
+    if (r.delay) setTimeout(send, r.delay);
+    else send();
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }

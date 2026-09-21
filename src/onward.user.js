@@ -646,16 +646,17 @@
   // Network
   // ---------------------------------------------------------------------------
 
-  function fetchBytes(url) {
+  function fetchBytes(url, signal) {
     const sameOrigin = safeOrigin(url) === win.location.origin;
     if (sameOrigin || typeof GM_xmlhttpRequest !== 'function') {
-      return fetch(url, { credentials: 'include', redirect: 'follow' }).then((r) => {
+      return fetch(url, { credentials: 'include', redirect: 'follow', signal }).then((r) => {
         if (!r.ok) throw new Error('HTTP ' + r.status);
         return r.arrayBuffer().then((buf) => ({ bytes: new Uint8Array(buf), type: r.headers.get('content-type'), finalUrl: r.url || url }));
       });
     }
     return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
+      if (signal && signal.aborted) return reject(new Error('aborted'));
+      const req = GM_xmlhttpRequest({
         method: 'GET', url, responseType: 'arraybuffer', timeout: 20000,
         onload: (r) => {
           if (r.status >= 400) return reject(new Error('HTTP ' + r.status));
@@ -665,6 +666,7 @@
         onerror: () => reject(new Error('network error')),
         ontimeout: () => reject(new Error('timed out')),
       });
+      if (signal) signal.addEventListener('abort', () => { if (req && req.abort) req.abort(); reject(new Error('aborted')); }, { once: true });
     });
   }
 
@@ -676,8 +678,9 @@
     try { return new URL(u).origin; } catch (e) { return ''; }
   }
 
-  function loadViaIframe(url, ready, timeoutMs) {
+  function loadViaIframe(url, ready, timeoutMs, signal) {
     return new Promise((resolve, reject) => {
+      if (signal && signal.aborted) return reject(new Error('aborted'));
       const f = document.createElement('iframe');
       f.setAttribute('aria-hidden', 'true');
       f.tabIndex = -1;
@@ -707,6 +710,7 @@
         try { if (f.contentDocument && f.contentDocument.body) return finish(); } catch (e) { /* blocked */ }
         finish(new Error('iframe timed out'));
       }, timeoutMs || 12000);
+      if (signal) signal.addEventListener('abort', () => finish(new Error('aborted')), { once: true });
       f.src = url;
       document.body.appendChild(f);
     });
@@ -811,6 +815,7 @@
       this.separators = [];
       this.inserted = [];  // nodes we added, so destroy() can take them back out
       this.ours = new WeakSet();
+      this.abort = new AbortController();  // cancels in-flight loads on destroy()
       this.startUrl = location.href;
       this.mode = (rule && rule.mode) || settings.mode;
       this.onScroll = this.onScroll.bind(this);
@@ -921,6 +926,11 @@
     destroy() {
       this.stopped = true;
       this.destroyed = true;
+      this.abort.abort();
+      // The added pages are about to go, so the address should too.
+      if (this.selfUrl && location.href === this.selfUrl && this.startUrl !== this.selfUrl) {
+        try { history.replaceState(history.state, '', this.startUrl); } catch (e) { /* ignore */ }
+      }
       if (this.scroller) this.scroller.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('resize', this.onScroll);
@@ -968,7 +978,8 @@
       const line = win.innerHeight * 0.35;
       let url = this.startUrl;
       for (const s of this.separators) {
-        if (s.url && s.outer.isConnected && s.outer.getBoundingClientRect().top < line) url = s.url;
+        // Only finished pages count; a loading or error bar's page isn't on screen.
+        if (s.url && s.kind === '' && s.outer.isConnected && s.outer.getBoundingClientRect().top < line) url = s.url;
       }
       if (url !== location.href && safeOrigin(url) === location.origin) {
         try { history.replaceState(history.state, '', url); this.selfUrl = url; } catch (e) { /* ignore */ }
@@ -984,8 +995,10 @@
       try {
         if (this.buttonMode) await this.clickMore(loading);
         else await this.appendPage(this.next.url, loading);
+        if (this.destroyed) return;
         this.failures = 0;
       } catch (e) {
+        if (this.destroyed) return;
         this.failures++;
         console.warn(TAG, e);
         this.removeBar(loading);
@@ -1010,20 +1023,23 @@
       let doc;
       let dispose = () => {};
       let finalUrl = url;
+      const signal = this.abort.signal;
       if (this.mode === 'iframe') {
-        ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0));
+        ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
       } else {
-        const r = await fetchBytes(url);
+        const r = await fetchBytes(url, signal);
+        if (this.destroyed) return;
         finalUrl = r.finalUrl || url;
         doc = parseHtml(decode(r.bytes, r.type, document.characterSet));
         if (!extractItems(doc, this).length && this.mode === 'auto' && safeOrigin(url) === location.origin) {
           // Probably rendered by scripts; a hidden iframe lets them run.
           console.info(TAG, 'no items in raw HTML, retrying in an iframe');
-          ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0));
+          ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
           this.mode = 'iframe';
         }
       }
       try {
+        if (this.destroyed) return;
         this.seen.add(stripHash(url));
         this.seen.add(stripHash(finalUrl));
         const next = this.findNextIn(doc, finalUrl);
@@ -1092,6 +1108,7 @@
       if (this.nativeObserver) { this.nativeObserver.disconnect(); this.nativeObserver = null; }
       el.click();
       const grew = await waitFor(() => this.container.childElementCount > before || document.documentElement.scrollHeight > height + 50, 10000);
+      if (this.destroyed) return;
       this.removeBar(bar);
       if (!grew) return this.stop('The “load more” button stopped adding items.');
       this.page++;
@@ -1136,6 +1153,7 @@
 
     setBar(sep, url, label, kind, onRetry) {
       sep.url = url;
+      sep.kind = kind || '';
       sep.bar.className = 'bar ' + (kind || '');
       sep.bar.replaceChildren(...[
         kind === 'loading' ? h('span', { class: 'spin' }) : null,

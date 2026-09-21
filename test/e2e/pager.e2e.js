@@ -238,6 +238,46 @@ test('a Discourse generator meta keeps Onward off until forced', async () => {
   await ctx.close();
 });
 
+const loadingBar = () => Array.from(document.querySelectorAll('[data-onward]'))
+  .some((w) => /Loading page/.test(w.shadowRoot?.textContent || ''));
+
+test('turning Onward off mid-load leaves nothing behind', async () => {
+  const { pg, ctx, errors } = await open('/slow?page=1');
+  assert.ok(await scrollToEnd(pg, loadingBar), 'a slow load is in flight');
+  await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await pg.waitForTimeout(300);
+  assert.match(await pg.evaluate(() => location.search), /page=1$/, 'the address waits for page 2 to arrive');
+  await pg.evaluate(() => { window.__menu['Toggle Onward on this site'](); });
+  await pg.waitForTimeout(3000); // longer than the 2 s response
+  const r = await pg.evaluate(() => ({
+    wrappers: document.querySelectorAll('[data-onward]').length,
+    posts: document.querySelectorAll('ul.posts > li.post').length,
+    stray: Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').filter((t) => /failed|Page \d/.test(t)),
+  }));
+  // The toast host is the only Onward element allowed to remain.
+  assert.deepEqual(r.stray, [], 'no page or failure bars');
+  assert.ok(r.wrappers <= 1, 'only the toast host remains');
+  assert.equal(r.posts, site.PER, 'nothing was inserted');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('restarting mid-load does not duplicate pages or leave a failure bar', async () => {
+  const { pg, ctx, errors } = await open('/slow?page=1');
+  assert.ok(await scrollToEnd(pg, loadingBar), 'a slow load is in flight');
+  await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'the new pager reaches the end');
+  const r = await pg.evaluate(() => ({
+    posts: Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent),
+    failed: Array.from(document.querySelectorAll('[data-onward]')).some((w) => /failed/.test(w.shadowRoot?.textContent || '')),
+  }));
+  assert.equal(r.failed, false, 'no failure bar from the old pager');
+  assert.equal(r.posts.length, site.PER * site.LAST);
+  assert.equal(new Set(r.posts).size, r.posts.length, 'no duplicate items');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
