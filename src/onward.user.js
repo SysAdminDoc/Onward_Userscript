@@ -928,6 +928,10 @@
       if (this.opts.onStandDown) this.opts.onStandDown(hadPages);
     }
 
+    scrollPos() {
+      return this.scroller && this.scroller.isConnected ? this.scroller.scrollTop : win.scrollY;
+    }
+
     /** Frameworks sometimes redraw the list and throw away what we added. */
     lost() {
       return !this.anchor.isConnected || (this.lastInserted && !this.lastInserted.isConnected);
@@ -981,8 +985,12 @@
         if (this.stopped || this.paused) return;
         // Tall footers shouldn't delay loading: the end of the list counts too.
         const end = this.wrap ? (this.lastInserted || this.container) : this.anchor.parentNode;
-        const toListEnd = end && end.getBoundingClientRect ? end.getBoundingClientRect().bottom - (m.top + m.view) : m.remaining;
+        const endBottom = end && end.getBoundingClientRect ? end.getBoundingClientRect().bottom : m.top + m.view + m.remaining;
+        const toListEnd = endBottom - (m.top + m.view);
         if (Math.min(m.remaining, toListEnd) >= m.view * this.s.threshold) return;
+        // A reader parked below the list (in the footer) gets one page per
+        // scroll; without this, every insert re-triggered the next load.
+        if (endBottom < m.top && this.insertScroll === this.scrollPos()) return;
         // The first time near the end, give the site PROBE_MS to show whether
         // it loads more by itself before Onward adds anything.
         if (!this.opts.force && !this.probed) {
@@ -1085,6 +1093,11 @@
         this.page++;
         this.setBar(bar, url, 'Page ' + this.page, '');
         const heightBefore = this.metrics().height;
+        // Scroll anchoring would pin a reader in the footer while the page
+        // grows above them. Let new items take the footer's place instead.
+        const anchorRoot = this.scroller || document.scrollingElement || document.documentElement;
+        const anchorWas = anchorRoot.style.overflowAnchor;
+        anchorRoot.style.overflowAnchor = 'none';
         if (this.wrap) {
           const shell = this.container.cloneNode(false);
           shell.removeAttribute('id');
@@ -1100,6 +1113,8 @@
           for (const n of frag.childNodes) this.ours.add(n);
           this.anchor.parentNode.insertBefore(frag, this.anchor);
         }
+        this.insertScroll = this.scrollPos();
+        win.requestAnimationFrame(() => win.requestAnimationFrame(() => { anchorRoot.style.overflowAnchor = anchorWas; }));
         this.onPageAppended(url);
         setTimeout(() => { if (!this.destroyed && this.lost()) this.handleLost(); }, 1500);
         // Guard against loading forever when added pages don't make the page longer.

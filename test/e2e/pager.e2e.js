@@ -448,6 +448,23 @@ test('an open picker is not disturbed by Onward putting the address back', async
   await ctx.close();
 });
 
+test('a reader parked in the footer gets one page per scroll, not a burst', async () => {
+  const { pg, ctx, errors } = await open('/long?page=1');
+  const posts = () => pg.evaluate(() => document.querySelectorAll('#list > li.post').length);
+  await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await pg.waitForTimeout(4500); // the first-load probe, then one load
+  assert.equal(await posts(), 2 * site.PER, 'one page after reaching the footer');
+  await pg.waitForTimeout(2000);
+  assert.equal(await posts(), 2 * site.PER, 'nothing more without scrolling');
+  for (let k = 3; k <= 4; k++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(1500);
+    assert.equal(await posts(), k * site.PER, 'one more page per scroll');
+  }
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

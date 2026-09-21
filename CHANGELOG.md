@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Scrolling into the footer no longer loads every page at once. New items now appear where the footer was, and the next page waits until you scroll again.
 - Turning Onward off, picking a new rule, or a site navigating while a page is still loading now cancels that load cleanly. Before, the old load could finish into a detached list and leave a "failed" bar behind.
 - The address bar only moves to page N once page N is actually on screen, and goes back to where you started when Onward removes its pages.
 - Onward stands by on sites that already load more as you scroll. Discourse and Flarum are recognised straight away. Anywhere else, Onward watches for a few seconds before its first page and each time you reach the bottom. If the site adds items by itself in that time, Onward takes its own pages back out so nothing is shown twice. A new menu command, "Run Onward here anyway", overrides this for the current page.

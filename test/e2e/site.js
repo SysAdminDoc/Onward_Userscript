@@ -6,6 +6,7 @@ const LAST = 4;
 // /live pages are long enough that a reader stays inside the list while paging.
 const LIVE_PER = 10;
 const LIVE_LAST = 5;
+const LONG_LAST = 10;
 
 const page = (title, body, head = '') => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>${head}
 <style>body{font:16px sans-serif;margin:0} header,footer{background:#ddd;padding:10px} footer{height:1600px}
@@ -129,6 +130,10 @@ function route(url) {
       ${Array.from({ length: LAST }, (_, i) => item(String(i + 1), `/bs?page=${i + 1}`, i + 1 === n ? ' active' : '')).join('')}
       ${n < LAST ? item('Next', u.searchParams.has('ext') ? `https://elsewhere.example/bs?page=${n + 1}` : `/bs?page=${n + 1}`) : item('Next', '#', ' disabled')}</ul></nav>`;
     return { body: page('Bootstrap ' + n, `<main><ul class="posts">${posts(n)}</ul>${nav}</main>`) };
+  }
+  if (u.pathname === '/long') {
+    // Ten ordinary pages, for readers who park in the footer.
+    return { body: page('Long ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/long?page=', n, 'Next', LONG_LAST)}`) };
   }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
