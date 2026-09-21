@@ -293,6 +293,43 @@ test('data-bg only becomes a background when it is an image address', () => {
   assert.equal(d.querySelector('.c').style.backgroundImage, 'url("https://example.com/c/9.jpg")');
 });
 
+test('a rule whose pattern stops inside the host is not indexed by a shorter host', async () => {
+  // Real wedata patterns (0.1.0 matched each on these sites; the host index dropped them).
+  const cases = [
+    ['^https?://(www\\.)?(zcool|hellorf)\\.com', 'https://www.zcool.com.cn/discover?page=2'],
+    ['^https://dual\\.nikkei\\.co', 'https://dual.nikkei.co.jp/atcl/column/17/'],
+    ['^https?://(www\\.)?ebookjapan', 'https://ebookjapan.yahoo.co.jp/search/?keyword=x'],
+    ['^https://(www\\.)?(studyplus|tech\\.torico-corp)', 'https://studyplus.jp/articles'],
+    ['^https?://www\\.jillstuart', 'https://www.jillstuart-beauty.com/ja-jp/item'],
+  ];
+  for (const [url] of cases) assert.equal(O.literalHosts(url), null, url);
+  // Where the pattern pins the host's end, it's still indexed.
+  assert.deepEqual(O.literalHosts('^https?://(www\\.)?zcool\\.com/'), ['www.zcool.com', 'zcool.com']);
+  assert.deepEqual(O.literalHosts('^https://dual\\.nikkei\\.co\\.jp(?:/|$)'), ['dual.nikkei.co.jp']);
+  assert.deepEqual(O.literalHosts('^https://example\\.com:8080/'), ['example.com']);
+  // A "/" that can be left out doesn't pin it, unless something required follows.
+  for (const url of ['https://onejav.com/*', '^https?://ukdata\\.blog38\\.fc2\\.com(/page-[\\d]+\\.html)?', '^https://(?:www\\.)?mysku\\.ru(?:/index/page\\d+/)?']) assert.equal(O.literalHosts(url), null, url);
+  assert.deepEqual(O.literalHosts('^https?://example\\.com/?(?:/|$)'), ['example.com']);
+  const rules = O.normalizeRules(cases.map(([url]) => ({ url, next: 'a.next', content: '.item' })), { fromList: true });
+  O.forgetListRules();
+  const cache = { list: await O.buildListEntry(rules, 1) };
+  for (const [url, href] of cases) {
+    assert.ok(O.matchingRules(await O.listRulesFor(cache, href), href).some((r) => r.url === url), url + ' at ' + href);
+  }
+});
+
+test('requiredLiteral: a code like \\x2D or \\u002F is not text every match contains', () => {
+  for (const [re, href] of [
+    ['^https?://[^/]+/list\\x2Dpage\\u002Fnext', 'https://a.example/list-page/next'],
+    ['^https?://[^/]+/tag\\u{2F}archive/\\p{L}+/older', 'https://a.example/tag/archive/abc/older'],
+  ]) {
+    assert.ok(new RegExp(re, 'u').test(href), 'the pattern matches ' + href);
+    const lit = O.requiredLiteral(re);
+    assert.ok(href.includes(lit), `${JSON.stringify(lit)} is not in ${href}`);
+  }
+  assert.equal(O.requiredLiteral('^https?://[^/]+/forum/viewtopic\\.php'), '/forum/viewtopic.php', 'plain text, an escaped dot included, still counts');
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },

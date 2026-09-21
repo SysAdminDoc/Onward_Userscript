@@ -2056,17 +2056,42 @@
     return src.length;
   }
   const QUANT_RE = /^(\?|\*|\+|\{\d*,?\d*\})\??/;
+  // A quantifier that lets what it follows be left out.
+  const OPTIONAL_RE = /^(\?|\*|\{0[,}])/;
 
-  /** The hosts a rule's pattern can only mean, with small groups expanded; null when its host part isn't plain. */
+  // The rest of a pattern after a host ends that host for sure: a "/", ":" or
+  // "$" (or a group starting the path) that can't be left out, maybe after ones
+  // that can (the "/*" in "example.com/*/list"). "example.com/*" alone doesn't.
+  function pinsHostEnd(rest) {
+    for (let i = 0; i < rest.length;) {
+      const c = rest[i];
+      if (c === '$') return true;
+      let end;
+      if (c === '/' || c === ':') end = i + 1;
+      else if (c === '(' && /^(\?:)?(\/|\$)/.test(rest.slice(i + 1))) end = skipGroup(rest, i) + 1;
+      else return false;
+      const q = QUANT_RE.exec(rest.slice(end));
+      if (!q || !OPTIONAL_RE.test(q[0])) return true;
+      i = end + q[0].length;
+    }
+    return false;
+  }
+
+  /**
+   * The hosts a rule's pattern can only mean, with small groups expanded; null
+   * when its host part isn't plain, or doesn't end where the host does (a
+   * pattern that stops at "zcool\.com" matches www.zcool.com.cn too).
+   */
   function literalHosts(pattern) {
     let s = pattern.replace(/\\\//g, '/').replace(/^\^/, '');
     const m = /^https?(\?|\[s\]\?)?:\/\//i.exec(s);
     if (!m) return null;
     s = s.slice(m[0].length);
     let hosts = [''];
+    let pinned = false;
     for (let i = 0; i < s.length; i++) {
       const c = s[i];
-      if (c === '/' || c === ':' || c === '$') break;
+      if (c === '/' || c === ':' || c === '$') { pinned = pinsHostEnd(s.slice(i)); break; }
       if (/[a-z0-9-]/i.test(c)) { hosts = hosts.map((h) => h + c.toLowerCase()); continue; }
       if (c === '.' || (c === '\\' && s[i + 1] === '.')) {
         if (c === '\\') i++;
@@ -2076,7 +2101,7 @@
       if (c === '(') {
         const end = skipGroup(s, i);
         const body = s.slice(i + 1, end).replace(/^\?:/, '');
-        if (/^(\/|\$)/.test(body)) break; // (?:/|$) starts the path
+        if (/^(\/|\$)/.test(body)) { pinned = pinsHostEnd(s.slice(i)); break; } // (?:/|$) starts the path
         const alts = body.split('|');
         if (alts.some((a) => !/^([a-z0-9-]|\\\.|\.)*$/i.test(a))) return null;
         const opts = alts.map((a) => a.replace(/\\\./g, '.').toLowerCase());
@@ -2090,6 +2115,7 @@
       }
       return null;
     }
+    if (!pinned) return null;
     hosts = hosts.filter((h) => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h));
     return hosts.length ? hosts : null;
   }
@@ -2104,8 +2130,13 @@
       if (c === '|') return ''; // alternatives: no one run is required
       if (c === '\\') {
         const n = src[++i];
-        if (n && !/[a-zA-Z0-9]/.test(n) && !QUANT_RE.test(src.slice(i + 1))) run += n; // an escaped symbol is itself
-        else flush(); // \d, \w, \b, or an optional one
+        if (n && !/[a-zA-Z0-9]/.test(n) && !QUANT_RE.test(src.slice(i + 1))) { run += n; continue; } // an escaped symbol is itself
+        flush(); // \d, \w, \b, a code like \x2D, or an optional one
+        // A code's digits (\x2D, \u002F, \u{2F}, \cJ) or name (\p{L}, \k<n>) belong to it, not to the text.
+        if (n === 'x') i += 2;
+        else if (n === 'c') i += 1;
+        else if (n === 'u' && src[i + 1] !== '{') i += 4;
+        else if (/[upPk]/.test(n)) { const end = src.indexOf(n === 'k' ? '>' : '}', i); if (end > 0) i = end; }
         continue;
       }
       if (c === '[' || c === '(') {
