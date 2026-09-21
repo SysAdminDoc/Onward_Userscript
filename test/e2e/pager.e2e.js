@@ -86,17 +86,67 @@ test('with page bars hidden, the address still follows the page in view', async 
   assert.equal(await search(), '?page=4', 'at the end');
   const markers = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li[data-onward]')).map((m) => ({
     height: m.getBoundingClientRect().height,
-    top: m.getBoundingClientRect().top + scrollY,
-    visible: !!m.querySelector('div') && getComputedStyle(m.querySelector('div')).display !== 'none',
+    display: getComputedStyle(m).display,
   })));
-  assert.ok(markers.slice(0, 3).every((m) => m.height === 0 && !m.visible), 'page bars take no space and show nothing');
+  assert.ok(markers.slice(0, 3).every((m) => m.height === 0 && m.display === 'none'), 'page bars are out of the layout');
   await pg.evaluate(() => window.scrollTo(0, 0));
   assert.equal(await search(), '?page=1', 'back at the top');
-  // Put page 3's marker just under the top of the window: page 3 is in view.
-  await pg.evaluate((y) => window.scrollTo(0, y), markers[1].top - 100);
+  // An item the page hides (an ad blocker, say) doesn't mark where its page starts.
+  await pg.addStyleTag({ content: 'li.post:has(> a[href$="/post/16"]) { display: none }' });
+  // Put page 3's first post just under the top of the window: page 3 is in view.
+  const top = await pg.evaluate(() => document.querySelector('a[href$="/post/11"]').closest('li').getBoundingClientRect().top + scrollY);
+  await pg.evaluate((y) => window.scrollTo(0, y), top - 100);
   assert.equal(await search(), '?page=3', 'mid-page');
   assert.deepEqual(errors, []);
   await ctx.close();
+});
+
+for (const shown of [true, false]) {
+  test(`in a column flex list, ${shown ? 'a page bar takes its own height' : 'a hidden page bar takes none'}`, async () => {
+    const { pg, ctx, errors } = await open('/flexcol?page=1', (s) => { window.__gm = { separators: s }; }, shown);
+    await pg.evaluate(() => { window.__menu['Load next page now'](); });
+    await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length > 5);
+    const heights = await pg.evaluate(() => Array.from(document.querySelectorAll('ul.posts > li[data-onward]')).map((m) => m.getBoundingClientRect().height));
+    assert.equal(heights.length, 1);
+    if (shown) assert.ok(heights[0] > 0 && heights[0] < 100, 'a bar, not the list\'s 600 px: ' + heights[0]);
+    else assert.equal(heights[0], 0);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
+test('page bars in a grid or a table take no more room than the bar, and none when hidden', async () => {
+  const { pg, ctx, errors } = await open('/gridlist?page=1', () => { window.__gm = { separators: false }; });
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length > 5);
+  const gap = await pg.evaluate(() => {
+    const posts = document.querySelectorAll('ul.posts > li.post');
+    return Math.round(posts[5].getBoundingClientRect().top - posts[0].getBoundingClientRect().bottom);
+  });
+  assert.equal(gap, 30, 'one row gap between pages, as between rows');
+  await ctx.close();
+  const t = await open('/forum/1.html', () => {
+    window.__gm = { separators: false };
+    const st = document.createElement('style');
+    st.textContent = 'td{height:40px}';
+    document.head.append(st);
+  });
+  await t.pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await t.pg.waitForFunction(() => document.querySelectorAll('tbody > tr[data-onward]').length > 0 && document.querySelectorAll('tbody > tr.thread').length > 5);
+  assert.deepEqual(await t.pg.evaluate(() => Array.from(document.querySelectorAll('tbody > tr[data-onward]')).map((m) => m.getBoundingClientRect().height)), [0]);
+  await t.ctx.close();
+  // A shown bar in the same table is as tall as the bar, not the site's cell height.
+  const v = await open('/forum/1.html', () => {
+    const st = document.createElement('style');
+    st.textContent = 'td{height:140px}';
+    document.head.append(st);
+  });
+  await v.pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await v.pg.waitForFunction(() => document.querySelectorAll('tbody > tr.thread').length > 5);
+  const [shown] = await v.pg.evaluate(() => Array.from(document.querySelectorAll('tbody > tr[data-onward]')).map((m) => m.getBoundingClientRect().height));
+  assert.ok(shown > 0 && shown < 100, 'a bar-sized row: ' + shown);
+  assert.deepEqual([...errors, ...t.errors, ...v.errors], []);
+  await v.ctx.close();
 });
 
 test('forum table in windows-1252 with a 下一页 link', async () => {

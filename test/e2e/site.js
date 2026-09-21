@@ -258,6 +258,13 @@ function route(url) {
     const k = n > 2 ? 1 : n;
     return { body: page('Lazy repeat ' + n, `<ul class="posts">${posts(k)}</ul>${pager('/lazyrepeat?page=', n, 'Next')}${loader}`) };
   }
+  if (u.pathname === '/flexcol') {
+    // A column flex list with a set height (its own scroller).
+    return { body: page('Flexcol ' + n, `<ul class="posts" style="display:flex;flex-direction:column;height:600px;overflow-y:auto;margin:0">${posts(n)}</ul>${pager('/flexcol?page=', n, 'Next')}`) };
+  }
+  if (u.pathname === '/gridlist') {
+    return { body: page('Grid ' + n, `<ul class="posts" style="display:grid;grid-template-columns:repeat(5,1fr);row-gap:30px;margin:0;padding:0">${posts(n)}</ul>${pager('/gridlist?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

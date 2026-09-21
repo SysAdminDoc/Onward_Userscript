@@ -1317,7 +1317,9 @@
       let url = this.startUrl;
       for (const s of this.separators) {
         // Only finished pages count; a loading or error bar's page isn't on screen.
-        if (s.url && s.kind === '' && s.outer.isConnected && s.outer.getBoundingClientRect().top < line) url = s.url;
+        if (!s.url || s.kind !== '') continue;
+        const top = this.pageTop(s);
+        if (top !== null && top < line) url = s.url;
       }
       if (url !== location.href && safeOrigin(url) === location.origin) {
         try {
@@ -1432,6 +1434,8 @@
           this.anchor.parentNode.insertBefore(frag, this.anchor);
         }
         release();
+        bar.first = this.lastInserted;
+        bar.size = this.wrap ? 1 : prepared.length;
         if (below) this.waitForReader();
         this.onPageAppended(url);
         setTimeout(() => { if (!this.destroyed && this.lost()) this.handleLost(); }, 1500);
@@ -1489,17 +1493,20 @@
     addBar(url, label, kind, onRetry, actionLabel) {
       // li/tr can't host a shadow root, so the bar lives in a div inside a
       // wrapper that is valid for the list it sits in.
-      const tag = barTag(this.anchor ? this.anchor.parentNode : null);
+      const list = this.anchor ? this.anchor.parentNode : null;
+      const tag = barTag(list);
       const outer = document.createElement(tag.outer);
       outer.setAttribute('data-onward', '');
+      // A whole row in a wrapping flex list; in a column one, just its own height.
+      const basis = list && list.nodeType === 1 && /^column/.test(win.getComputedStyle(list).flexDirection) ? 'auto' : '100%';
       // Sites style their li/tr (fixed heights and the like); none of it should reach the bar.
-      outer.style.cssText = 'display:block;width:auto;height:auto;min-height:0;grid-column:1/-1;flex:0 0 100%;float:none;clear:both;list-style:none;margin:0;padding:0;border:0;background:none;';
+      outer.style.cssText = 'display:block;width:auto;height:auto;min-height:0;grid-column:1/-1;flex:0 0 ' + basis + ';float:none;clear:both;list-style:none;margin:0;padding:0;border:0;background:none;';
       let mount = outer;
       if (tag.inner) {
         outer.style.display = 'table-row';
         mount = document.createElement(tag.inner);
         mount.colSpan = tableColumns(this.anchor.parentNode);
-        mount.style.cssText = 'padding:0;border:0;background:none;';
+        mount.style.cssText = 'height:auto;padding:0;border:0;background:none;';
         outer.appendChild(mount);
       }
       const { host, sr } = shadowHost('div', 'display:block;');
@@ -1533,9 +1540,21 @@
         kind === '' && this.userStopped ? h('button', { title: 'Carry on loading pages', onclick: () => this.resume() }, 'Resume') : null,
         kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.userStop() }, 'Stop') : null,
       ].filter(Boolean));
-      // A hidden page bar keeps its (now zero-height) wrapper in the layout,
-      // so the address bar can still tell which page is in view.
-      sep.host.style.display = !this.s.separators && kind === '' ? 'none' : 'block';
+      // A hidden page bar leaves the layout (a zero-height wrapper still takes
+      // a grid row, flex space or a table row); syncUrl uses the page's items.
+      sep.outer.style.display = !this.s.separators && kind === '' ? 'none' : sep.display;
+    }
+
+    /** Where a finished page starts on screen: its bar, or with bars hidden, its first item that is laid out. */
+    pageTop(sep) {
+      if (sep.outer.style.display !== 'none') return sep.outer.isConnected ? sep.outer.getBoundingClientRect().top : null;
+      let n = sep.first;
+      for (let i = 0; n && i < (sep.size || 1); i++, n = n.nextElementSibling) {
+        if (!n.isConnected) return null;
+        const r = n.getBoundingClientRect();
+        if (r.width || r.height) return r.top;
+      }
+      return null;
     }
   }
 
