@@ -842,12 +842,17 @@
       const u = BG_ATTRS.map((a) => b.getAttribute(a)).find(Boolean) || (/url\(\s*["']?([^"')]+)/i.exec(b.getAttribute('style') || '') || [])[1];
       if (u && !PLACEHOLDER_RE.test(u)) return u;
     }
-    // A <noscript> copy: markup in a fetched page, raw text on the live one.
+    // A <noscript> copy: markup in a fetched page, raw text on the live one. The
+    // raw text is read as markup too (in a template, where nothing loads), so
+    // "&#038;" decodes the same on both and page 1 keys like a copy of it.
     for (const ns of el.querySelectorAll('noscript')) {
-      const img = ns.querySelector('img[src]');
+      let img = ns.querySelector('img[src]');
+      if (!img && ns.textContent) {
+        const t = el.ownerDocument.createElement('template');
+        t.innerHTML = ns.textContent;
+        img = t.content.querySelector('img[src]');
+      }
       if (img) return img.getAttribute('src');
-      const m = /<img\b[^>]*?\ssrc\s*=\s*["']?([^"'\s>]+)/i.exec(ns.textContent || '');
-      if (m) return m[1];
     }
     return '';
   }

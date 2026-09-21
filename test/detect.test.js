@@ -372,6 +372,18 @@ test('toggling a site: both lists, in both modes', () => {
   assert.deepEqual(t({ runOn: 'listed', disabledHosts: ['a.example'] }, 'a.example'), { on: true, allowHosts: ['a.example'], disabledHosts: [] });
 });
 
+test('a live page\'s raw <noscript> picture keys like the fetched copy of it', () => {
+  // WordPress writes & in attributes as &#038;. A fetched copy decodes it; the live page's raw text used not to.
+  const fetched = dom('<ul><li><img src="/blank.gif"><noscript><img src="/p/9.jpg?w=300&#038;h=200"></noscript></li></ul>').querySelector('li');
+  const live = dom('<ul><li><img src="/blank.gif"></li></ul>').querySelector('li');
+  const ns = live.ownerDocument.createElement('noscript');
+  ns.textContent = '<img src="/p/9.jpg?w=300&#038;h=200">';
+  live.appendChild(ns);
+  assert.equal(O.itemKey(live, true), O.itemKey(fetched, true));
+  const other = dom('<ul><li><img src="/blank.gif"><noscript><img src="/p/10.jpg?w=300&#038;h=200"></noscript></li></ul>').querySelector('li');
+  assert.notEqual(O.itemKey(live, true), O.itemKey(other, true), 'the picture is what tells them apart');
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },
