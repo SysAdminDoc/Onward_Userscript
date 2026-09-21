@@ -39,6 +39,7 @@
   const DEFAULTS = {
     threshold: 1.5,        // start loading when less than N viewport heights remain
     maxPages: 40,          // hard cap per visit
+    spacing: 1000,         // ms between page requests to a site, so paging never hammers it
     separators: true,      // show a page bar between pages
     updateUrl: true,       // replaceState to the page currently in view
     mode: 'auto',          // auto | fetch | iframe
@@ -1235,6 +1236,11 @@
       this.paused = false;
       const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + '…', 'loading');
       try {
+        // Space requests out, however they were triggered (scroll, chain, menu, click).
+        const wait = (this.lastRequestAt || 0) + this.s.spacing - Date.now();
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        if (this.destroyed) return;
+        this.lastRequestAt = Date.now();
         if (this.buttonMode) await this.clickMore(loading);
         else await this.appendPage(this.next.url, loading);
         if (this.destroyed) return;
@@ -1526,6 +1532,7 @@
       h('div', { class: 'sub' }, location.hostname + ': ' + (app.pager && !app.pager.stopped ? `active, page ${app.pager.page}` : app.status)),
       h('label', {}, 'Start loading when this many screens remain', num('threshold', '0.1')),
       h('label', {}, 'Maximum pages per visit', num('maxPages', '1')),
+      h('label', {}, 'Wait between page requests (ms)', num('spacing', '100')),
       h('label', {}, 'Show a bar between pages', chk('separators')),
       h('label', {}, 'Update the address bar while scrolling', chk('updateUrl')),
       h('label', {}, 'Loading mode', modeSel),

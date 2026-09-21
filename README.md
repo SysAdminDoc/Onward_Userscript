@@ -77,6 +77,7 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 | --- | --- | --- |
 | Start loading when this many screens remain | 1.5 | Lower means later, higher means earlier. |
 | Maximum pages per visit | 40 | A hard cap per page load. |
+| Wait between page requests (ms) | 1000 | However fast you scroll, a site gets at most one page request per this many milliseconds. |
 | Show a bar between pages | on | Status bars (loading, errors, end) always show. |
 | Update the address bar while scrolling | on | Uses `history.replaceState`, so the back button isn't flooded. |
 | Loading mode | auto | `auto` fetches first and falls back to an iframe when needed. |

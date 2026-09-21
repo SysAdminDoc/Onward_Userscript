@@ -654,6 +654,18 @@ test('a refresh hidden in page 2 does not navigate the tab', async () => {
   await ctx.close();
 });
 
+test('page requests are spaced out, by the configured gap', async () => {
+  // A short page and a reader at the bottom: without spacing the three loads come back to back.
+  const { pg, ctx, errors } = await open('/spaced?page=1', () => { window.__gm = { spacing: 1500 }; });
+  site.hits.spaced.length = 0;
+  assert.ok(await scrollToEnd(pg, endBar, 60), 'paged to the end');
+  const t = site.hits.spaced;
+  assert.equal(t.length, site.LAST - 1);
+  for (let i = 1; i < t.length; i++) assert.ok(t[i] - t[i - 1] >= 1450, `gap ${t[i] - t[i - 1]} ms between requests ${i} and ${i + 1}`);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a redirect back to a page already shown ends paging', async () => {
   const { pg, ctx, errors } = await open('/redir?page=1');
   assert.ok(await scrollToEnd(pg, endBar), 'paging ended');
