@@ -13,9 +13,12 @@ It does the same job as [Pagetual](https://github.com/hoothin/UserScripts/tree/m
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/) or [Violentmonkey](https://violentmonkey.github.io/).
-2. Open [`src/onward.user.js`](https://raw.githubusercontent.com/SysAdminDoc/Onward_Userscript/main/src/onward.user.js) and accept the install prompt.
+2. On Chrome, Edge and other Chromium browsers, let the manager run scripts. Managers built on Chrome's user scripts API, Tampermonkey 5.5 and later among them, run nothing until you do, and nothing tells you why.
+   - If the manager's **Details** page (from `chrome://extensions` or `edge://extensions`) has an **Allow User Scripts** switch, as Chrome 138 and later do, turn it on.
+   - Otherwise turn on **Developer mode** at the top of the extensions page.
+3. Open [`src/onward.user.js`](https://raw.githubusercontent.com/SysAdminDoc/Onward_Userscript/main/src/onward.user.js) and accept the install prompt.
 
-The script updates itself from this repo.
+The script updates itself from this repo. Firefox needs no extra step.
 
 ## What it does
 
@@ -123,6 +126,7 @@ npm run check     # syntax check and version consistency
 npm run screenshots
 npm run smoke     # real sites from scripts/smoke-sites.json, checked against what Onward should do there
 npm run smoke -- https://news.ycombinator.com/news   # or just report on any page
+npm run bench -- items_all.json   # what a wedata-sized rule list costs (download it from wedata.net first)
 ```
 
 `npm run e2e` needs Playwright's Chromium (`npx playwright install chromium` if it isn't there). `npm run smoke` loads at most three pages per site and fails only when Onward does something other than expected. A site that shows the headless browser a bot check, or refuses its requests, is reported as not checked, and Google and Bing are on the list as things to check by hand. The fixture site in `test/e2e/site.js` covers a paginated blog, a windows-1252 forum table, a script-rendered grid, a list that redraws itself, a failing server, an inner scroll container and a load-more button.
