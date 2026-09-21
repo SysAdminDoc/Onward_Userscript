@@ -147,6 +147,22 @@ function route(url) {
     // Pages after the first never answer.
     return { body: page('Hang ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/hang?page=', n, 'Next')}`), delay: n > 1 ? 1e9 : 0 };
   }
+  if (u.pathname === '/lateimg') {
+    // Articles whose images reserve no height and arrive 700 ms late, so the
+    // list keeps growing above a reader after each page lands.
+    const arts = Array.from({ length: PER }, (_, i) => {
+      const k = (n - 1) * PER + i + 1;
+      return `<article class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img src="/slow.svg?k=${k}"></article>`;
+    }).join('');
+    return { body: page('Late ' + n, `<div class="posts" id="list">${arts}</div>${pager('/lateimg?page=', n, 'Next', LONG_LAST)}`) };
+  }
+  if (u.pathname === '/slow.svg') {
+    return { body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="160"></svg>', type: 'image/svg+xml', delay: 700 };
+  }
+  if (u.pathname === '/shortfoot') {
+    // A footer shorter than a page, so one page is enough to pull the list end into view.
+    return { body: page('Short ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/shortfoot?page=', n, 'Next', LONG_LAST)}`, '<style>footer{height:300px}</style>') };
+  }
   if (u.pathname === '/long') {
     // Ten ordinary pages, for readers who park in the footer.
     return { body: page('Long ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/long?page=', n, 'Next', LONG_LAST)}`) };

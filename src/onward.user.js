@@ -1026,6 +1026,52 @@
       return this.scroller && this.scroller.isConnected ? this.scroller.scrollTop : win.scrollY;
     }
 
+    /** Where the list ends, in viewport coordinates. */
+    listEndBottom(m) {
+      const end = this.wrap ? (this.lastInserted || this.container) : this.anchor.parentNode;
+      return end && end.getBoundingClientRect ? end.getBoundingClientRect().bottom : m.top + m.view + m.remaining;
+    }
+
+    /** The reader's whole view is below the list (they are in the footer). */
+    readerBelowList() {
+      const m = this.metrics();
+      return this.listEndBottom(m) < m.top;
+    }
+
+    // Scroll anchoring would pin a reader in the footer while the list grows
+    // above them. While Onward adds items it is off; the site's own value comes
+    // back two frames after the last hold ends.
+    holdAnchoring() {
+      const root = this.scroller || document.scrollingElement || document.documentElement;
+      if (!this.anchorHolds) {
+        this.anchorRoot = root;
+        this.anchorSaved = [root.style.getPropertyValue('overflow-anchor'), root.style.getPropertyPriority('overflow-anchor')];
+        root.style.setProperty('overflow-anchor', 'none', 'important');
+      }
+      this.anchorHolds = (this.anchorHolds || 0) + 1;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        win.requestAnimationFrame(() => win.requestAnimationFrame(() => {
+          if (this.destroyed) return;
+          if (--this.anchorHolds === 0) this.restoreAnchoring();
+        }));
+      };
+    }
+
+    restoreAnchoring() {
+      this.anchorHolds = 0;
+      const [value, priority] = this.anchorSaved;
+      if (value) this.anchorRoot.style.setProperty('overflow-anchor', value, priority);
+      else this.anchorRoot.style.removeProperty('overflow-anchor');
+    }
+
+    /** After a page lands below a reader in the footer, the next waits for them to scroll. */
+    waitForReader() {
+      this.awaitScroll = { pos: this.scrollPos(), height: this.metrics().height };
+    }
+
     /** Frameworks sometimes redraw the list and throw away what we added. */
     lost() {
       return !this.anchor.isConnected || (this.lastInserted && !this.lastInserted.isConnected);
@@ -1055,6 +1101,7 @@
       if (this.scroller) this.scroller.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('resize', this.onScroll);
+      if (this.anchorHolds) this.restoreAnchoring();
       if (this.nativeObserver) this.nativeObserver.disconnect();
       for (const s of this.separators) s.outer.remove();
       this.separators = [];
@@ -1077,14 +1124,24 @@
         // watching after Onward stops too: the site may load its own copy then.
         if (m.remaining < m.view * 0.25) this.openWatch();
         if (this.stopped || this.paused) return;
+        if (this.awaitScroll) {
+          // A page landed while the reader sat below the list: wait until they
+          // scroll. A shift that only matches content growing above them (late
+          // images, the browser keeping its place) is not the reader. Being at
+          // the very bottom is: an insert above always leaves page below them.
+          const w = this.awaitScroll;
+          const moved = this.scrollPos() - w.pos;
+          const grew = m.height - w.height;
+          if (m.remaining >= 2 && (Math.abs(moved) < 1 || Math.abs(moved - grew) <= 2)) {
+            w.pos = this.scrollPos();
+            w.height = m.height;
+            return;
+          }
+          this.awaitScroll = null;
+        }
         // Tall footers shouldn't delay loading: the end of the list counts too.
-        const end = this.wrap ? (this.lastInserted || this.container) : this.anchor.parentNode;
-        const endBottom = end && end.getBoundingClientRect ? end.getBoundingClientRect().bottom : m.top + m.view + m.remaining;
-        const toListEnd = endBottom - (m.top + m.view);
+        const toListEnd = this.listEndBottom(m) - (m.top + m.view);
         if (Math.min(m.remaining, toListEnd) >= m.view * this.s.threshold) return;
-        // A reader parked below the list (in the footer) gets one page per
-        // scroll; without this, every insert re-triggered the next load.
-        if (endBottom < m.top && this.insertScroll === this.scrollPos()) return;
         // The first time near the end, give the site PROBE_MS to show whether
         // it loads more by itself before Onward adds anything.
         if (!this.opts.force && !this.probed) {
@@ -1195,11 +1252,8 @@
         this.page++;
         this.setBar(bar, url, 'Page ' + this.page, '');
         const heightBefore = this.metrics().height;
-        // Scroll anchoring would pin a reader in the footer while the page
-        // grows above them. Let new items take the footer's place instead.
-        const anchorRoot = this.scroller || document.scrollingElement || document.documentElement;
-        const anchorWas = anchorRoot.style.overflowAnchor;
-        anchorRoot.style.overflowAnchor = 'none';
+        const below = this.readerBelowList();
+        const release = this.holdAnchoring();
         if (this.wrap) {
           const shell = this.container.cloneNode(false);
           shell.removeAttribute('id');
@@ -1215,8 +1269,8 @@
           for (const n of frag.childNodes) this.ours.add(n);
           this.anchor.parentNode.insertBefore(frag, this.anchor);
         }
-        this.insertScroll = this.scrollPos();
-        win.requestAnimationFrame(() => win.requestAnimationFrame(() => { anchorRoot.style.overflowAnchor = anchorWas; }));
+        release();
+        if (below) this.waitForReader();
         this.onPageAppended(url);
         setTimeout(() => { if (!this.destroyed && this.lost()) this.handleLost(); }, 1500);
         // Guard against loading forever when added pages don't make the page longer.
@@ -1253,11 +1307,15 @@
       const height = document.documentElement.scrollHeight;
       // From here on the list grows because of our clicks, not by itself.
       if (this.nativeObserver) { this.nativeObserver.disconnect(); this.nativeObserver = null; }
+      const below = this.readerBelowList();
+      const release = this.holdAnchoring();
       el.click();
       const grew = await waitFor(() => this.container.childElementCount > before || document.documentElement.scrollHeight > height + 50, 10000);
+      release();
       if (this.destroyed) return;
       this.removeBar(bar);
       if (!grew) return this.stop('The “load more” button stopped adding items.');
+      if (below) this.waitForReader();
       this.page++;
       this.onPageAppended(null);
     }

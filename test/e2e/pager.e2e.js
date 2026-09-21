@@ -610,6 +610,47 @@ test('the menu says when paging was paused after an error', async () => {
   await ctx.close();
 });
 
+const parkedReader = async (pg, url, count) => {
+  // Scroll to the very bottom once and sit there.
+  await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await pg.waitForTimeout(4500); // the first-load probe, then one load
+  const first = await pg.evaluate(count);
+  await pg.waitForTimeout(3000); // late images, anchoring, chained timers
+  return { first, later: await pg.evaluate(count) };
+};
+
+test('a parked reader gets one page even while images above keep growing', async () => {
+  const { pg, ctx, errors } = await open('/lateimg?page=1');
+  const r = await parkedReader(pg, '/lateimg', () => document.querySelectorAll('#list > article.post').length);
+  assert.equal(r.first, 2 * site.PER, 'one page after reaching the footer');
+  assert.equal(r.later, 2 * site.PER, 'late images above did not pull in more pages');
+  await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await pg.waitForTimeout(2500);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > article.post').length), 3 * site.PER, 'a real scroll brings the next one');
+  assert.equal(await pg.evaluate(() => document.documentElement.style.overflowAnchor), '', 'anchoring handed back');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a parked reader with a short footer still gets one page per scroll', async () => {
+  const { pg, ctx, errors } = await open('/shortfoot?page=1');
+  const r = await parkedReader(pg, '/shortfoot', () => document.querySelectorAll('#list > li.post').length);
+  assert.equal(r.first, 2 * site.PER);
+  assert.equal(r.later, 2 * site.PER, 'no more pages until the reader scrolls');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a load-more reader parked in the footer gets one batch per scroll', async () => {
+  const { pg, ctx, errors } = await open('/more');
+  const r = await parkedReader(pg, '/more', () => document.querySelectorAll('#list > li.post').length);
+  assert.equal(r.first, 2 * site.PER, 'one click after reaching the footer');
+  assert.equal(r.later, 2 * site.PER, 'no clicking spree');
+  assert.equal(await pg.evaluate(() => document.documentElement.style.overflowAnchor), '', 'anchoring handed back');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
