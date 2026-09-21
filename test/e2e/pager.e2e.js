@@ -554,6 +554,19 @@ test('Stop becomes Resume, and the menu tells stopped, paused and finished apart
   await ctx.close();
 });
 
+test('a redirect back to a page already shown ends paging', async () => {
+  const { pg, ctx, errors } = await open('/redir?page=1');
+  assert.ok(await scrollToEnd(pg, endBar), 'paging ended');
+  const r = await pg.evaluate(() => ({
+    posts: Array.from(document.querySelectorAll('ul.posts > li.post > a')).map((a) => a.textContent),
+    text: Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' | '),
+  }));
+  assert.deepEqual(r.posts, Array.from({ length: 2 * site.PER }, (_, i) => 'Post ' + (i + 1)), 'pages 1 and 2 only, nothing repeated');
+  assert.match(r.text, /No more pages\./);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('a page that never answers times out after 20 s and pauses', async () => {
   const { pg, ctx, errors } = await open('/hang?page=1');
   const failed = () => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /failed \(timed out\)\. Paused\./.test(w.shadowRoot?.textContent || ''));

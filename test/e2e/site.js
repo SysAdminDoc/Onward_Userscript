@@ -131,6 +131,13 @@ function route(url) {
       ${n < LAST ? item('Next', u.searchParams.has('ext') ? `https://elsewhere.example/bs?page=${n + 1}` : `/bs?page=${n + 1}`) : item('Next', '#', ' disabled')}</ul></nav>`;
     return { body: page('Bootstrap ' + n, `<main><ul class="posts">${posts(n)}</ul>${nav}</main>`) };
   }
+  if (u.pathname === '/redir') {
+    // Like a WordPress /page/N past the end: page 3 redirects back to page 1.
+    if (n === 3) return { status: 302, location: '/redir?page=1', body: '' };
+    // A per-request timestamp in every item, so the repeat-content check can't be what catches it.
+    const stamped = posts(n).replace(/<\/li>/g, `<small>${process.hrtime.bigint()}</small></li>`);
+    return { body: page('Redir ' + n, `<ul class="posts">${stamped}</ul>${pager('/redir?page=', n, 'Next')}`) };
+  }
   if (u.pathname === '/hang') {
     // Pages after the first never answer.
     return { body: page('Hang ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/hang?page=', n, 'Next')}`), delay: n > 1 ? 1e9 : 0 };
@@ -179,6 +186,7 @@ function start() {
     // Record requests the client gave up on before the answer went out.
     res.on('close', () => { if (!res.writableEnded) hits.aborted.push(req.url); });
     const send = () => {
+      if (r.location) { res.writeHead(r.status || 302, { location: r.location }); res.end(); return; }
       res.writeHead(r.status || 200, { 'content-type': r.type || 'text/html; charset=utf-8' });
       res.end(r.body);
     };

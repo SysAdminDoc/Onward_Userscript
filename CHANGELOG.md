@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- When a site answers a page past the end by redirecting back to a page you already have (common on WordPress), Onward now stops there instead of adding that page again.
 - A page that never answers now gives up after 20 seconds and pauses with a Retry button, instead of showing "Loading page N" forever.
 - Stop can be undone. After you press it, the page bars show Resume, and "Load next page now" also picks up where you stopped. The menu now says whether paging was stopped by you, paused after an error, or reached the last page, instead of always saying "No more pages".
 - With "Show a bar between pages" turned off, the address bar follows the page you're reading again. Before, it jumped to the last page loaded and stayed there.

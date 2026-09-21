@@ -1125,6 +1125,7 @@
       const signal = this.abort.signal;
       if (this.mode === 'iframe') {
         ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
+        try { finalUrl = doc.location.href; } catch (e) { /* keep the requested URL */ }
       } else {
         const r = await fetchBytes(url, signal);
         if (this.destroyed) return;
@@ -1139,6 +1140,11 @@
       }
       try {
         if (this.destroyed) return;
+        // A redirect back to a page already on screen (/page/99 -> /page/1) is the real end.
+        if (this.seen.has(stripHash(finalUrl))) {
+          this.removeBar(bar);
+          return this.stop('No more pages.');
+        }
         this.seen.add(stripHash(url));
         this.seen.add(stripHash(finalUrl));
         const next = this.findNextIn(doc, finalUrl);
