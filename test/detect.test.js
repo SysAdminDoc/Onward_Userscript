@@ -553,6 +553,39 @@ test('picker selectors: cssPath and uniqueSelector', () => {
   assert.equal(one(digit, O.cssPath(digit.querySelector('a'))), 1);
 });
 
+test('picker selectors: the bottom pager stays the bottom one, two classes, quotes and odd spaces', () => {
+  globalThis.CSS = new JSDOM('').window.CSS;
+  const hit = (d, sel) => d.evaluate(sel, d, null, 7, null);
+  // Next above and below the list: the bottom one is saved as the last match,
+  // so a page that shows a third (a sidebar) still gets the bottom one.
+  const pager = '<div class="nav"><a class="nx" href="/2">Next</a></div>';
+  const two = dom(`${pager}<ul>${items(3)}</ul>${pager}`);
+  const bottom = two.querySelectorAll('a.nx')[1];
+  const sel = O.uniqueSelector(bottom);
+  assert.match(sel, /\[last\(\)\]$/, sel);
+  const three = dom(`${pager}<ul>${items(3)}</ul><aside>${pager}</aside>${pager}`);
+  assert.equal(hit(three, sel).snapshotItem(0), three.querySelectorAll('a.nx')[2]);
+  // Two lists told apart only by their second class.
+  const lists = dom('<ul class="list a"><li class="item">x</li><li class="item">y</li></ul><ul class="list b"><li class="item">z</li><li class="item">w</li></ul>');
+  assert.equal(O.cssPath(lists.querySelector('ul.b > li')), 'ul.list.b > li.item');
+  // Labels with quotes still make a working label XPath (not a position that shifts on page 2).
+  for (const label of ["Page d'après", 'Say "next"', `It's "next"`]) {
+    const d = dom(`<div class="pagination"><a class="page-link" href="/1">1</a><a class="page-link" href="/3">${label.replace(/"/g, '&quot;')}</a><a class="page-link" href="/4">4</a></div>`);
+    const a = d.querySelectorAll('a')[1];
+    const u = O.uniqueSelector(a);
+    assert.match(u, /^\/\/a\[normalize-space\(translate/, label + ': ' + u);
+    assert.equal(hit(d, u).snapshotLength, 1, u);
+    assert.equal(hit(d, u).snapshotItem(0), a, u);
+  }
+  // A form feed is a space to the picker but not to XPath: the label test then
+  // matches another link, and that must never be saved for this one.
+  const ff = dom('<div class="p"><a class="n" href="/2">Next\fpage</a></div><div class="p"><a class="n" href="/9">Next page</a></div>');
+  const mine = ff.querySelector('div.p a');
+  const u2 = O.uniqueSelector(mine);
+  const found = /^(\(|\/)/.test(u2) ? hit(ff, u2).snapshotItem(0) : ff.querySelector(u2);
+  assert.equal(found, mine, u2);
+});
+
 test('rules from a downloaded list never click; rules you write can', () => {
   const clicky = [{ url: '^https://shop\\.example/', next: 'button.buy', click: true }];
   assert.equal(O.normalizeRules(clicky)[0].click, true, 'a rule written in Settings keeps click');
