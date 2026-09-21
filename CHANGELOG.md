@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Settings now shows diagnostics for the page you're on: how Onward found the next link (and its score), the list and its item count, the loading mode, whether pages are wrapped, what scrolls, the rule it used and which list that rule came from, and the last error. "Copy diagnostics" copies it as plain text for a bug report. Nothing is sent or filed anywhere.
 - Screen readers now hear what Onward does: "Page 3 loaded, 5 items", a failed page, Stop, and the end of the list. The Settings dialog is announced as a dialog, takes focus when it opens and gives it back when it closes, and every field has a name. Its hint text is easier to read.
 - Rule lists take a third of the space they did: about 330 KB for the whole wedata list instead of 970 KB. That matters because some userscript managers hand a script's whole storage to every page it runs on. A page now looks up only the rules for its own site and the few general ones its address could match, instead of testing all 3,800, and reads the lists once. Lists saved by 0.1.0 keep working until their first refresh succeeds.
 - Fewer blank images on added pages. Onward now knows every attribute Pagetual reads for lazy images and a few more (`data-lazyload`, `data-orig-file`, `data-ks-lazyload`, `data-defer-src`, `lazysrc`, `_src`, Discuz's `zoomfile` and `file`, and others), prefers the full-size address, replaces a placeholder `srcset` with `data-srcset`, and turns `data-bg` and `data-background-image` into a real background image.

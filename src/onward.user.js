@@ -1215,6 +1215,9 @@
       this.path = describePath(content.container);
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
       this.firstKey = content.items.length ? itemKey(content.items[0], true) : null;
+      this.startItems = content.items.length;
+      this.contentHow = content.how;
+      this.firstNext = { how: next.how, score: next.score };
       rememberItems(content.items, this.itemKeys);
       this.buttonMode = next.url === null;
       // Anchor: new pages go right after the last current item.
@@ -1586,6 +1589,7 @@
         this.removeBar(loading);
         if (ctl.signal.aborted) { this.busy = false; return; }
         this.failures++;
+        this.lastError = 'page ' + (this.page + 1) + ': ' + e.message;
         console.warn(TAG, e);
         if (this.failures >= 3) this.stop('Could not load the next page: ' + e.message, 'err');
         else {
@@ -1892,7 +1896,9 @@
       .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
       button{background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:8px;padding:7px 14px;cursor:pointer;font:inherit;transition:transform .12s,background .12s}
       button:hover{background:#45475a;transform:translateY(-1px)} button.pri{background:#89b4fa;color:#11111b;border-color:#89b4fa}
-      .err{color:#f38ba8;min-height:16px;margin-top:6px}`));
+      .err{color:#f38ba8;min-height:16px;margin-top:6px}
+      .diag{white-space:pre-wrap;word-break:break-all;background:#181825;border:1px solid #45475a;border-radius:6px;padding:8px;margin:6px 0 0;
+        max-height:170px;overflow:auto;font:12px ui-monospace,Consolas,monospace}`));
     const num = (key, step) => h('input', { type: 'number', step, value: s[key], 'data-k': key });
     const chk = (key) => { const c = h('input', { type: 'checkbox', 'data-k': key }); c.checked = !!s[key]; return c; };
     const modeSel = h('select', { 'data-k': 'mode' }, ...['auto', 'fetch', 'iframe'].map((m) => { const o = h('option', { value: m }, m); o.selected = s.mode === m; return o; }));
@@ -1903,6 +1909,9 @@
     const excl = h('textarea', { spellcheck: 'false', 'aria-label': 'Never run on these hosts' }); excl.value = s.exclude.join('\n');
     const srcs = h('textarea', { spellcheck: 'false', style: 'min-height:50px', 'aria-label': 'Rule list URLs' }); srcs.value = s.sources.join('\n');
     const err = h('div', { class: 'err', role: 'alert' });
+    const diagText = diagnostics(app);
+    // Focusable, so a keyboard can scroll it.
+    const diag = h('pre', { class: 'diag', tabindex: '0', 'aria-label': 'Diagnostics' }, diagText);
     // Focus goes into the dialog and, when it closes, back where it was.
     const opener = document.activeElement;
     const close = () => {
@@ -1946,6 +1955,11 @@
       h('div', { class: 'blk' }, 'Site rules (JSON)', rules,
         h('div', { class: 'hint' }, '[{"url": "^https://example\\\\.com/list", "next": "a.next", "content": "#results > .item"}]. CSS or XPath. Optional: "insert", "mode", "click".')),
       h('div', { class: 'blk' }, 'Never run on these hosts', excl),
+      h('div', { class: 'blk' }, 'Diagnostics', diag,
+        h('div', { class: 'hint' }, 'What Onward found on this page. Paste it into a bug report; nothing is sent anywhere.'),
+        h('div', { class: 'row', style: 'justify-content:flex-start' }, h('button', {
+          onclick: async () => toast(await copyText(diagText) ? 'Diagnostics copied.' : 'Couldn’t copy. Select the text and copy it yourself.', 'ok'),
+        }, 'Copy diagnostics'))),
       h('div', { class: 'blk' }, 'Rule list URLs (optional)', srcs,
         h('div', { class: 'hint' }, `Onward or AutoPagerize/wedata JSON. ${Object.values(store.get('sourceCache') || {}).reduce((n, e) => n + listCount(e), 0) || (store.get('sourceRules') || []).length} cached rules.`),
         h('div', { class: 'row', style: 'justify-content:flex-start' }, h('button', { onclick: () => updateSources(srcs.value.split(/\s+/).filter(Boolean), true) }, 'Update rule lists now'))),
@@ -2149,6 +2163,45 @@
   function forgetListRules() {
     listStore = null;
     unpacked.clear();
+  }
+
+  /** Plain-text state for a bug report: what Onward found here, and what went wrong. */
+  function diagnostics(app) {
+    const p = app.pager;
+    const lines = ['Onward ' + VERSION + ' on ' + location.href];
+    lines.push('Status: ' + (p && !p.stopped ? 'active, page ' + p.page : app.status + (p && p.endReason ? ' (stopped: ' + p.endReason + ')' : '')));
+    if (p && p.next) {
+      // How the link was first found; later pages reuse its spot, so their own find says less.
+      const f = p.firstNext || p.next;
+      lines.push('Next link: ' + f.how + (f.score != null ? ', score ' + f.score : '') + '; next page ' + (p.next.url || 'loads by clicking a button'));
+      lines.push('Content: ' + (p.container ? cssPath(p.container) : '?') + ', ' + p.startItems + ' items on the first page (' + p.contentHow + ')');
+      lines.push('Mode: ' + p.mode + '; wrapped pages: ' + (p.wrap ? 'yes' : 'no') + '; scrolls: ' + (p.scroller ? cssPath(p.scroller) : 'the window'));
+      lines.push('Last error: ' + (p.lastError || 'none'));
+    }
+    const choice = app.choice || {};
+    const rule = choice.rule;
+    let from = 'none; found by detection';
+    if (rule && choice.mine) from = 'your site rule' + (rule.next ? '' : ', for the items only (its next link isn’t on this page)');
+    else if (rule) from = 'rule list ' + (rule.source || 'saved by 0.1.0');
+    lines.push('Rule: ' + from + (rule ? ' ' + JSON.stringify({ url: rule.url, next: rule.next, content: rule.content }) : ''));
+    return lines.join('\n');
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (e) {
+      // Some pages block the async clipboard; a selected textarea still copies.
+      const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' });
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e2) { /* nothing more to try */ }
+      ta.remove();
+      return ok;
+    }
   }
 
   /**
@@ -2443,6 +2496,7 @@
           return;
         }
         const choice = chooseRule(s.rules, this.listRules, location.href, document, attempt);
+        this.choice = choice;
         if (choice.wait) { this.status = 'waiting for the page to render'; return retry(); }
         const rule = choice.rule;
         const userRule = !!choice.mine;

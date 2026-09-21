@@ -1471,6 +1471,10 @@ test('a packed rule list is used on the site it names', async () => {
   await inject(pg, SHARED_SHIM);
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
   assert.ok(logs.some((l) => /active: rule/.test(l)), 'by the list rule');
+  // Diagnostics say which list the rule came from.
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  const diag = await pg.evaluate(() => document.querySelector('[data-onward-panel]').shadowRoot.querySelector('.diag').textContent);
+  assert.match(diag, /\nRule: rule list http:\/\/127\.0\.0\.1:\d+\/rules\.json\?mode=site \{"url":/);
   await ctx.close();
 });
 
@@ -1589,6 +1593,36 @@ test('the settings panel passes axe, and focus goes in and comes back', async ()
   assert.deepEqual(lowContrast, []);
   await pg.getByRole('button', { name: 'Cancel' }).click();
   assert.equal(await pg.evaluate(() => document.activeElement.getAttribute('href')), '/post/1', 'focus came back');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('Settings shows diagnostics and copies them', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts > li.post').length >= 10), 'page 2 is in');
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  await pg.getByRole('button', { name: 'Copy diagnostics' }).click();
+  await pg.waitForTimeout(200);
+  const text = await pg.evaluate(() => navigator.clipboard.readText());
+  assert.match(text, /^Onward \d+\.\d+\.\d+ on http:\/\/127\.0\.0\.1:\d+\/blog/);
+  assert.match(text, /\nNext link: text, score \d+; next page http:\/\/127\.0\.0\.1:\d+\/blog\?page=3\r?\n/, 'the clipboard may hand back CRLF');
+  assert.match(text, /\nContent: .*ul\.posts, 5 items on the first page \(auto\)/);
+  assert.match(text, /\nMode: auto; wrapped pages: no; scrolls: the window/);
+  assert.match(text, /\nLast error: none/);
+  assert.match(text, /\nRule: none; found by detection/);
+  assert.match(await pg.evaluate(onwardText), /Diagnostics copied/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('diagnostics name the rule and the last error', async () => {
+  const { pg, ctx, errors } = await open('/flaky?page=1', (r) => { window.__gm = { rules: [r] }; }, RULE('.pagination a.next', 'ul.posts > li.post', '/flaky'));
+  assert.ok(await scrollToEnd(pg, () => /failed/.test(Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').join(' ')), 40));
+  await pg.evaluate(() => { window.__menu['Settings'](); });
+  const text = await pg.evaluate(() => document.querySelector('[data-onward-panel]').shadowRoot.querySelector('.diag').textContent);
+  assert.match(text, /\nLast error: page 2: HTTP 500/);
+  assert.match(text, /\nRule: your site rule \{"url":/);
   assert.deepEqual(errors, []);
   await ctx.close();
 });
