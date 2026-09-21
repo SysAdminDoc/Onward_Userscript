@@ -37,6 +37,7 @@ Open your userscript manager's menu on any page:
 | --- | --- |
 | Toggle Onward on this site | Turns it off or back on for the current host. |
 | Load next page now | Loads the next page without scrolling. It also resumes after you pressed Stop or after a failure, and tells you when the last page has been reached. |
+| Load 5 more pages | Loads up to five pages one after another, handy for reading or printing a whole thread. It keeps to the page limit and the gap between requests. |
 | Run Onward here anyway | Starts Onward on a page where it stood by because the site seemed to load more by itself. |
 | Pick next link and content… | Click the "Next" link, then click one result. Onward saves a rule for the site and restarts. |
 | Settings | Opens the settings panel. |

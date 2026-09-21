@@ -1162,6 +1162,29 @@ test('a rule list that comes back as an error page keeps its last good copy', as
   await ctx.close();
 });
 
+test('"Load 5 more pages" loads to the last page without scrolling, counting as it goes', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  await pg.evaluate(() => { window.__menu['Load 5 more pages'](); });
+  await pg.waitForFunction(() => Array.from(document.querySelectorAll('[data-onward]')).some((w) => /Loading page 3 \(2 of 5\)/.test(w.shadowRoot?.textContent || '')), null, { timeout: 8000 });
+  await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 20, null, { timeout: 15000 });
+  await pg.waitForTimeout(500);
+  assert.equal(await pg.evaluate(() => scrollY), 0, 'the reader never moved');
+  assert.match(await pg.evaluate(onwardText), /No more pages/);
+  assert.equal(await pg.evaluate(() => location.search), '?page=1', 'the address stays with the page in view');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('"Load 5 more pages" pressed while a page is loading waits for it, then carries on', async () => {
+  const { pg, ctx, errors } = await open('/slow?page=1');
+  assert.ok(await scrollToEnd(pg, loadingBar), 'page 2 is on its way');
+  await pg.evaluate(() => { window.__menu['Load 5 more pages'](); });
+  await pg.waitForFunction(() => document.querySelectorAll('ul.posts > li.post').length === 20, null, { timeout: 20000 });
+  assert.match(await pg.evaluate(onwardText), /No more pages/);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));

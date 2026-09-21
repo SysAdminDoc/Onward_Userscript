@@ -1369,7 +1369,7 @@
       this.busy = true;
       this.paused = false;
       if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
-      const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + '…', 'loading');
+      const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + (this.batch ? ` (${this.batch.i} of ${this.batch.n})` : '') + '…', 'loading');
       // Stop cancels this load; so does destroy().
       const ctl = new AbortController();
       const cancel = () => ctl.abort();
@@ -1420,6 +1420,17 @@
       // Keep filling short pages, gently, once the new page's images have their size:
       // images without a set height make every new page look short until they load.
       if (!this.stopped) Promise.all([this.imagesSettled(1500), new Promise((r) => setTimeout(r, 400))]).then(this.onScroll);
+    }
+
+    /** Loads up to n pages back to back, within the page cap and the gap between requests. */
+    async loadMany(n) {
+      for (let i = 1; i <= n; i++) {
+        while (this.busy && !this.destroyed) await new Promise((r) => setTimeout(r, 100));
+        if (this.stopped || this.destroyed || (i > 1 && this.paused)) break;
+        this.batch = { i, n };
+        try { await this.loadNext(); } finally { this.batch = null; }
+        if (this.paused) break;
+      }
     }
 
     async appendPage(url, bar, signal) {
@@ -2037,9 +2048,10 @@
         if (i >= 0) { list.splice(i, 1); store.set('disabledHosts', list); toast('Enabled on ' + location.hostname, 'ok'); app.restart(); }
         else { list.push(location.hostname); store.set('disabledHosts', list); if (app.pager) app.pager.destroy(); app.pager = null; toast('Disabled on ' + location.hostname); }
       });
-      GM_registerMenuCommand('Load next page now', () => {
+      // The pager, ready for a load you asked for; or null, having said why not.
+      const pagerForLoad = () => {
         const p = app.pager;
-        if (!p) return toast('Nothing to load: ' + app.status, 'err');
+        if (!p) { toast('Nothing to load: ' + app.status, 'err'); return null; }
         if (p.userStopped) {
           toast('Resuming. Paging was stopped by you.', 'ok');
           p.resume();
@@ -2052,10 +2064,13 @@
             nogrowth: 'Stopped because added pages weren’t making the page any longer.',
             lost: 'Stopped because this site keeps redrawing its list.',
           };
-          return toast(why[p.endReason] || 'Last page reached.', 'err');
+          toast(why[p.endReason] || 'Last page reached.', 'err');
+          return null;
         }
-        p.loadNext();
-      });
+        return p;
+      };
+      GM_registerMenuCommand('Load next page now', () => { const p = pagerForLoad(); if (p) p.loadNext(); });
+      GM_registerMenuCommand('Load 5 more pages', () => { const p = pagerForLoad(); if (p) p.loadMany(5); });
       GM_registerMenuCommand('Run Onward here anyway', () => {
         toast('Running on this page.', 'ok');
         app.restart({ force: true });
