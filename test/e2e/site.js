@@ -3,20 +3,23 @@ const http = require('http');
 
 const PER = 5;
 const LAST = 4;
+// /live pages are long enough that a reader stays inside the list while paging.
+const LIVE_PER = 10;
+const LIVE_LAST = 5;
 
 const page = (title, body, head = '') => `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>${head}
 <style>body{font:16px sans-serif;margin:0} header,footer{background:#ddd;padding:10px} footer{height:1600px}
 li,tr{height:140px} .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}</style></head>
 <body><header><a href="/">Home</a> <a href="/more-menu">More</a></header>${body}<footer>footer</footer></body></html>`;
 
-const posts = (n) => Array.from({ length: PER }, (_, i) => {
-  const k = (n - 1) * PER + i + 1;
+const posts = (n, per = PER) => Array.from({ length: per }, (_, i) => {
+  const k = (n - 1) * per + i + 1;
   return `<li class="post"><a href="/post/${k}">Post ${k}</a><p>Summary of post ${k}.</p><img data-src="/img/${k}.png" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></li>`;
 }).join('');
 
-const pager = (base, n, nextLabel) => `<div class="pagination">${Array.from({ length: LAST }, (_, i) => i + 1)
+const pager = (base, n, nextLabel, last = LAST) => `<div class="pagination">${Array.from({ length: last }, (_, i) => i + 1)
   .map((k) => (k === n ? `<span class="current">${k}</span>` : `<a href="${base}${k}">${k}</a>`)).join(' ')}
-  ${n < LAST ? `<a class="next" href="${base}${n + 1}">${nextLabel}</a>` : ''}</div>`;
+  ${n < last ? `<a class="next" href="${base}${n + 1}">${nextLabel}</a>` : ''}</div>`;
 
 // One second of 8 kHz, 8-bit mono silence.
 function wav() {
@@ -61,12 +64,19 @@ function route(url) {
       <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }
         // Report from the setter itself: volumechange is queued as a task and
         // Onward removes the frame before that task would run.
-        const snd = document.getElementById('snd');
         const muted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
-        Object.defineProperty(snd, 'muted', { configurable: true, get() { return muted.get.call(this); }, set(v) {
+        const report = (el, where) => Object.defineProperty(el, 'muted', { configurable: true, get() { return muted.get.call(this); }, set(v) {
           muted.set.call(this, v);
-          if (top !== self) parent.postMessage({ type: 'media', page: location.search, muted: muted.get.call(this), paused: this.paused }, '*');
-        } });</script>`) };
+          if (top !== self) parent.postMessage({ type: 'media', page: location.search, where, muted: muted.get.call(this), paused: this.paused }, '*');
+        } });
+        report(document.getElementById('snd'), 'light');
+        // A second track inside an open shadow root.
+        const host = document.createElement('div');
+        document.body.append(host);
+        const inner = document.createElement('audio');
+        inner.src = '/tone.wav'; inner.autoplay = true; inner.loop = true;
+        host.attachShadow({ mode: 'open' }).append(inner);
+        report(inner, 'shadow');</script>`) };
   }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {
@@ -78,11 +88,38 @@ function route(url) {
           if (busy || !more.length || innerHeight + scrollY < document.documentElement.scrollHeight - 200) return;
           busy = true;
           setTimeout(() => { document.getElementById('list').insertAdjacentHTML('beforeend', more.shift()); busy = false; }, 100);
-        });</script>`, `<link rel="next" href="/selfscroll?page=${n + 1}">`) };
+        });</script>`, n < LAST ? `<link rel="next" href="/selfscroll?page=${n + 1}">` : '') };
   }
   if (u.pathname === '/slow') {
     // Pages after the first take 2 s, so a test can act while one is in flight.
     return { body: page('Slow ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/slow?page=', n, 'Next')}`), delay: n > 1 ? 2000 : 0 };
+  }
+  if (u.pathname === '/batch') {
+    // Jetpack-style: each native batch arrives as ONE wrapper holding a page of posts.
+    const article = (k) => `<article class="post"><h2><a href="/post/${k}">Post ${k}</a></h2><p>Summary of post ${k}.</p></article>`;
+    const batch = (m) => Array.from({ length: PER }, (_, i) => article((m - 1) * PER + i + 1)).join('');
+    const more = JSON.stringify(Array.from({ length: LAST - n }, (_, i) => `<div class="infinite-wrap">${batch(n + i + 1)}</div>`));
+    return { body: page('Batch ' + n, `<div id="posts" class="posts">${batch(n)}</div>${pager('/batch?page=', n, 'Next')}
+      <script>const more = ${more}; let busy = false;
+        addEventListener('scroll', () => {
+          if (busy || !more.length || innerHeight + scrollY < document.documentElement.scrollHeight - 200) return;
+          busy = true;
+          setTimeout(() => { document.getElementById('posts').insertAdjacentHTML('beforeend', more.shift()); busy = false; }, 100);
+        });</script>`, n < LAST ? `<link rel="next" href="/batch?page=${n + 1}">` : '') };
+  }
+  if (u.pathname === '/ads') {
+    // A plain paginated list whose own script drops an ad in whenever posts appear.
+    return { body: page('Ads ' + n, `<ul class="posts" id="list">${posts(n)}</ul>${pager('/ads?page=', n, 'Next')}
+      <script>const list = document.getElementById('list'); let ads = 0;
+        new MutationObserver(() => {
+          const want = Math.floor(list.querySelectorAll(':scope > li.post').length / ${PER});
+          while (ads < want) { ads++; const li = document.createElement('li'); li.className = 'ad'; li.textContent = 'Sponsored ' + ads; list.append(li); }
+        }).observe(list, { childList: true });</script>`) };
+  }
+  if (u.pathname === '/live') {
+    // A plain paginated list with long pages that prepends one live item every 1.5 s.
+    return { body: page('Live ' + n, `<ul class="posts" id="list">${posts(n, LIVE_PER)}</ul>${pager('/live?page=', n, 'Next', LIVE_LAST)}
+      <script>let k = 0; setInterval(() => { k++; const li = document.createElement('li'); li.className = 'post live'; li.innerHTML = '<a href="/live/' + k + '">Live ' + k + '</a><p>Breaking item ' + k + '.</p>'; document.getElementById('list').prepend(li); }, 1500);</script>`) };
   }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
@@ -121,6 +158,8 @@ function start() {
   const server = http.createServer((req, res) => {
     const r = route(req.url);
     if (!r) { res.writeHead(404); res.end('nope'); return; }
+    // Record requests the client gave up on before the answer went out.
+    res.on('close', () => { if (!res.writableEnded) hits.aborted.push(req.url); });
     const send = () => {
       res.writeHead(r.status || 200, { 'content-type': r.type || 'text/html; charset=utf-8' });
       res.end(r.body);
@@ -131,6 +170,6 @@ function start() {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-const hits = { flaky: {} };
+const hits = { flaky: {}, aborted: [] };
 
-module.exports = { start, hits, PER, LAST };
+module.exports = { start, hits, PER, LAST, LIVE_PER, LIVE_LAST };

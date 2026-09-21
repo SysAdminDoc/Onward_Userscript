@@ -47,6 +47,11 @@ async function scrollToEnd(pg, until, rounds = 30) {
   return false;
 }
 
+const pageBars = () => ({
+  bars: Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').filter((t) => /Page \d|Loading/.test(t)),
+  posts: Array.from(document.querySelectorAll('#list > li.post > a')).map((a) => a.textContent),
+});
+
 const endBar = () => Array.from(document.querySelectorAll('[data-onward]'))
   .some((w) => /No more|End of results|No more items/.test(w.shadowRoot?.textContent || ''));
 
@@ -123,10 +128,10 @@ test('iframe fallback is sandboxed and silenced, and a frame buster cannot take 
     assert.equal(f.sandbox, 'allow-scripts allow-same-origin');
     assert.equal(f.allow, "autoplay 'none'");
   }
-  // The setter reports mid-silence (muted before pause), so judge each frame by its last report.
+  // The setter reports mid-silence (muted before pause), so judge each track by its last report.
   const last = {};
-  for (const m of r.media) last[m.page] = m;
-  assert.equal(Object.keys(last).length, site.LAST - 1, 'every iframe page reported: ' + JSON.stringify(r.media));
+  for (const m of r.media) last[m.page + ' ' + m.where] = m;
+  assert.equal(Object.keys(last).length, 2 * (site.LAST - 1), 'both tracks on every iframe page reported: ' + JSON.stringify(r.media));
   for (const m of Object.values(last)) assert.ok(m.muted && m.paused, 'iframe media muted and paused: ' + JSON.stringify(m));
   // The only page errors are the sandbox refusing each frame buster.
   assert.ok(errors.length >= 1, 'frame buster ran and was refused');
@@ -137,7 +142,7 @@ test('iframe fallback is sandboxed and silenced, and a frame buster cannot take 
 test('a list the site redraws switches to wrapped pages', async () => {
   const { pg, ctx, errors } = await open('/redraw?page=1');
   // The inline pass may finish before the redraw, so wait for the wrapped result itself.
-  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts[data-onward-page] > li.post').length >= 15));
+  assert.ok(await scrollToEnd(pg, () => document.querySelectorAll('ul.posts[data-onward-page] > li.post').length >= 15, 60));
   await pg.waitForTimeout(600);
   const r = await pg.evaluate(() => ({
     original: document.querySelectorAll('#app > ul.posts:not([data-onward-page]) > li.post').length,
@@ -180,6 +185,8 @@ test('pages load inside an inner scroll container', async () => {
 test('element picker saves a working site rule', async () => {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
+  const logs = [];
+  pg.on('console', (m) => logs.push(m.text()));
   await pg.goto(base + '/blog?page=1');
   await pg.addScriptTag({ content: SHIM + SCRIPT });
   // Don't return the picker's promise: evaluate would wait for clicks that can't happen yet.
@@ -199,6 +206,8 @@ test('element picker saves a working site rule', async () => {
   assert.match(rules[0].content, /ul\.posts > li\.post$/);
   assert.equal(rules[0].click, false);
   assert.ok(await scrollToEnd(pg, endBar), 'pager restarted with the rule');
+  // Auto-detection pages /blog too, so check the saved rule is what ran.
+  assert.ok(logs.some((l) => /active: rule/.test(l)), 'the saved rule matched this host (port included)');
   assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
   await ctx.close();
 });
@@ -211,11 +220,8 @@ test('a site that loads more by itself gets no Onward pages', async () => {
     await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await pg.waitForTimeout(300);
   }
-  const r = await pg.evaluate(() => ({
-    bars: document.querySelectorAll('[data-onward]').length,
-    posts: Array.from(document.querySelectorAll('#list > li.post > a')).map((a) => a.textContent),
-  }));
-  assert.equal(r.bars, 0, 'no Onward bars');
+  const r = await pg.evaluate(pageBars);
+  assert.deepEqual(r.bars, [], 'no Onward bars');
   assert.equal(r.posts.length, site.PER * site.LAST, 'the site loaded its own pages');
   assert.equal(new Set(r.posts).size, r.posts.length, 'no duplicate items');
   assert.ok(logs.some((l) => /loads more by itself/.test(l)), 'Onward said why it stood down');
@@ -256,6 +262,7 @@ test('turning Onward off mid-load leaves nothing behind', async () => {
   }));
   // The toast host is the only Onward element allowed to remain.
   assert.deepEqual(r.stray, [], 'no page or failure bars');
+  assert.ok(site.hits.aborted.some((u) => u.startsWith('/slow?page=2')), 'the in-flight request was aborted: ' + JSON.stringify(site.hits.aborted));
   assert.ok(r.wrappers <= 1, 'only the toast host remains');
   assert.equal(r.posts, site.PER, 'nothing was inserted');
   assert.deepEqual(errors, []);
@@ -274,6 +281,114 @@ test('restarting mid-load does not duplicate pages or leave a failure bar', asyn
   assert.equal(r.failed, false, 'no failure bar from the old pager');
   assert.equal(r.posts.length, site.PER * site.LAST);
   assert.equal(new Set(r.posts).size, r.posts.length, 'no duplicate items');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a slow reader on a self-loading site ends with only the site\'s own pages', async () => {
+  const { pg, ctx, errors } = await open('/selfscroll?page=1');
+  // Sit still past the probe so Onward loads first, read into page 2 long
+  // enough for the address to move (and the SPA check to see it), then head
+  // for the bottom where the site loads its own pages.
+  await pg.waitForTimeout(3500);
+  await pg.evaluate(() => window.scrollBy(0, 600));
+  await pg.waitForFunction(() => /page=[2-9]/.test(location.search), null, { timeout: 5000 });
+  await pg.waitForTimeout(1500);
+  // Keep going long enough that a restarted pager would show itself.
+  for (let i = 0; i < 36; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  const r = await pg.evaluate(pageBars);
+  assert.deepEqual(r.bars, [], 'Onward took its pages back out');
+  assert.equal(await pg.evaluate(() => location.search), '?page=1', 'the address went back to the start');
+  assert.equal(r.posts.length, site.PER * site.LAST);
+  assert.equal(new Set(r.posts).size, r.posts.length, 'no duplicate items');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a site that loads each batch in one wrapper is recognised', async () => {
+  const { pg, ctx, errors } = await open('/batch?page=1');
+  for (let i = 0; i < 16; i++) {
+    await pg.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await pg.waitForTimeout(300);
+  }
+  const r = await pg.evaluate(() => ({
+    bars: Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').filter((t) => /Page \d|Loading/.test(t)),
+    posts: Array.from(document.querySelectorAll('#posts article.post h2 a')).map((a) => a.textContent),
+  }));
+  assert.deepEqual(r.bars, [], 'no Onward pages');
+  assert.equal(r.posts.length, site.PER * site.LAST);
+  assert.equal(new Set(r.posts).size, r.posts.length, 'no duplicate items');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('ads the site drops in as posts appear do not stop paging', async () => {
+  const { pg, ctx, errors } = await open('/ads?page=1');
+  assert.ok(await scrollToEnd(pg, endBar, 60));
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), site.PER * site.LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a live item prepended every 1.5 s does not stop paging', async () => {
+  // Long pages read at a steady pace: the session outlasts many live items,
+  // and only growth inside a watch window may count against the site.
+  const { pg, ctx, errors } = await open('/live?page=1');
+  let done = false;
+  for (let i = 0; i < 120 && !done; i++) {
+    // Read down the list, never into the footer beneath it.
+    await pg.evaluate(() => {
+      const end = document.getElementById('list').getBoundingClientRect().bottom;
+      window.scrollBy(0, Math.max(0, Math.min(400, end - innerHeight - 300)));
+    });
+    await pg.waitForTimeout(500);
+    done = await pg.evaluate(endBar);
+  }
+  assert.ok(done, 'reached the last page');
+  assert.ok(await pg.evaluate(() => document.querySelectorAll('#list > li.live').length) >= 4, 'enough live items arrived to matter');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post:not(.live)').length), site.LIVE_PER * site.LIVE_LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('a picked rule runs even where the page says it is Discourse', async () => {
+  const { pg, ctx, errors } = await open('/generator?page=1');
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  const clickOn = async (sel) => {
+    const el = pg.locator(sel).first();
+    await el.scrollIntoViewIfNeeded();
+    const box = await el.boundingBox();
+    await pg.mouse.move(box.x + 3, box.y + 3);
+    await pg.mouse.click(box.x + 3, box.y + 3);
+  };
+  await clickOn('.pagination a.next');
+  await clickOn('li.post p');
+  assert.ok(await scrollToEnd(pg, endBar), 'the picked rule pages to the end');
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER * site.LAST);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
+test('an open picker is not disturbed by Onward putting the address back', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1');
+  assert.ok(await scrollToEnd(pg, () => /page=[34]$/.test(location.search)), 'pages loaded and the address moved');
+  await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
+  await pg.waitForTimeout(5000); // SPA check (1 s) + restart delay + a whole probe
+  const r = await pg.evaluate(() => ({
+    posts: document.querySelectorAll('ul.posts > li.post').length,
+    search: location.search,
+    bars: Array.from(document.querySelectorAll('[data-onward]')).map((w) => w.shadowRoot?.textContent || '').filter((t) => /Page \d|Loading/.test(t)),
+  }));
+  assert.equal(r.posts, site.PER, 'the picker page holds still');
+  assert.deepEqual(r.bars, []);
+  assert.equal(r.search, '?page=1', 'the address went back to the start');
+  // The site itself navigating while the picker is open must not restart Onward under it.
+  await pg.evaluate(() => history.pushState({}, '', '/blog?page=1&view=list'));
+  await pg.waitForTimeout(5500);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('ul.posts > li.post').length), site.PER, 'still holding still');
   assert.deepEqual(errors, []);
   await ctx.close();
 });

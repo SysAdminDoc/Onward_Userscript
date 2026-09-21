@@ -716,10 +716,18 @@
     });
   }
 
-  function silence(doc) {
-    for (const m of doc.querySelectorAll('video, audio')) {
+  // Media in open shadow roots and same-origin child frames too. Detached
+  // new Audio() objects are out of reach; allow="autoplay 'none'" covers those.
+  function silence(root) {
+    for (const m of root.querySelectorAll('video, audio')) {
       m.muted = true;
       if (!m.paused) m.pause();
+    }
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) silence(el.shadowRoot);
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+        try { if (el.contentDocument) silence(el.contentDocument); } catch (e) { /* cross-origin */ }
+      }
     }
   }
 
@@ -842,7 +850,7 @@
       else if (this.wrap && !this.buttonMode) content.container.after(this.anchor);
       else last.after(this.anchor);
       this.scroller = findScroller(content.container);
-      if (!this.opts.force) this.watchNative();
+      if (!this.opts.force) this.watchNative(content.items);
       console.info(TAG, 'active:', next.how, next.url || '(button)', '| content:', content.how, this.wrap ? '(wrapped)' : '', content.container);
       return true;
     }
@@ -880,30 +888,44 @@
       return { remaining: height - (win.scrollY + win.innerHeight), view: win.innerHeight, height, top: 0 };
     }
 
-    /** Element children of the list that Onward didn't add. */
-    nativeCount() {
-      let n = 0;
-      for (const c of this.container.children) if (!this.ours.has(c) && !c.hasAttribute('data-onward')) n++;
-      return n;
-    }
-
-    // Some sites load more by themselves (Discourse, feeds). Once Onward starts
-    // waiting to load, growth it didn't cause means it should stand down.
-    watchNative() {
-      this.nativeObserver = new MutationObserver(() => {
-        if (this.baseCount === undefined || this.stopped) return;
-        if (this.nativeCount() - this.baseCount >= NATIVE_GROWTH) this.standDown();
+    // Some sites load more by themselves (Discourse, feeds, Jetpack). Growth
+    // Onward didn't cause only counts inside a watch window: while it waits
+    // before its first load, and for PROBE_MS each time the reader reaches the
+    // bottom. Outside those windows, ads and live updates look the same.
+    // Growth is weighed in elements, so one wrapper holding a whole batch of
+    // posts counts as much as the posts, and a re-render that swaps nodes
+    // counts as nothing.
+    watchNative(items) {
+      let size = 0;
+      for (const it of items) size += 1 + it.getElementsByTagName('*').length;
+      this.growthLimit = NATIVE_GROWTH * Math.max(1, size / items.length);
+      const weight = (n) => (n.nodeType === 1 && !this.ours.has(n) && !n.hasAttribute('data-onward') ? 1 + n.getElementsByTagName('*').length : 0);
+      this.nativeObserver = new MutationObserver((records) => {
+        if (!(this.watchUntil > Date.now()) || this.stoodDown || this.destroyed) return;
+        for (const r of records) {
+          for (const n of r.addedNodes) this.watchGrowth += weight(n);
+          for (const n of r.removedNodes) this.watchGrowth -= weight(n);
+        }
+        if (this.watchGrowth >= this.growthLimit) this.standDown();
       });
       this.nativeObserver.observe(this.container, { childList: true });
     }
 
+    openWatch() {
+      if (!this.nativeObserver || this.watchUntil > Date.now()) return;
+      this.watchUntil = Date.now() + PROBE_MS;
+      this.watchGrowth = 0;
+    }
+
     standDown() {
-      if (this.stoodDown) return;
+      if (this.stoodDown || this.destroyed) return;
       this.stoodDown = true;
+      const hadPages = this.page > 1;
       console.info(TAG, STANDING_BY.toLowerCase() + '; standing by');
-      if (this.page > 1) return this.stop(STANDING_BY + ', so Onward stopped.');
-      this.stopped = true;
-      if (this.opts.onStandDown) this.opts.onStandDown();
+      // Cancels a load in flight and takes Onward's pages back out, so the
+      // site's own pages are the only copy.
+      this.destroy();
+      if (this.opts.onStandDown) this.opts.onStandDown(hadPages);
     }
 
     /** Frameworks sometimes redraw the list and throw away what we added. */
@@ -930,6 +952,7 @@
       // The added pages are about to go, so the address should too.
       if (this.selfUrl && location.href === this.selfUrl && this.startUrl !== this.selfUrl) {
         try { history.replaceState(history.state, '', this.startUrl); } catch (e) { /* ignore */ }
+        if (this.opts.onUrl) this.opts.onUrl(location.href);
       }
       if (this.scroller) this.scroller.removeEventListener('scroll', this.onScroll);
       win.removeEventListener('scroll', this.onScroll);
@@ -951,8 +974,11 @@
         this.syncUrl();
         if (this.busy) return;
         if (this.page > 1 && this.lost()) return this.handleLost();
-        if (this.stopped || this.paused) return;
         const m = this.metrics();
+        // The bottom of the page is where self-loading sites fetch more. Keep
+        // watching after Onward stops too: the site may load its own copy then.
+        if (m.remaining < m.view * 0.25) this.openWatch();
+        if (this.stopped || this.paused) return;
         // Tall footers shouldn't delay loading: the end of the list counts too.
         const end = this.wrap ? (this.lastInserted || this.container) : this.anchor.parentNode;
         const toListEnd = end && end.getBoundingClientRect ? end.getBoundingClientRect().bottom - (m.top + m.view) : m.remaining;
@@ -962,7 +988,7 @@
         if (!this.opts.force && !this.probed) {
           if (!this.probeStart) {
             this.probeStart = Date.now();
-            this.baseCount = this.nativeCount();
+            this.openWatch();
             setTimeout(this.onScroll, PROBE_MS + 50);
             return;
           }
@@ -982,7 +1008,11 @@
         if (s.url && s.kind === '' && s.outer.isConnected && s.outer.getBoundingClientRect().top < line) url = s.url;
       }
       if (url !== location.href && safeOrigin(url) === location.origin) {
-        try { history.replaceState(history.state, '', url); this.selfUrl = url; } catch (e) { /* ignore */ }
+        try {
+          history.replaceState(history.state, '', url);
+          this.selfUrl = url;
+          if (this.opts.onUrl) this.opts.onUrl(url);
+        } catch (e) { /* ignore */ }
       }
     }
 
@@ -1349,6 +1379,11 @@
   }
 
   async function runPicker(app) {
+    app.picking = true;
+    try { await pickRule(app); } finally { app.picking = false; }
+  }
+
+  async function pickRule(app) {
     // Hold the page still while the user points at things.
     if (app.pager) { app.pager.destroy(); app.pager = null; }
     let nextEl = await pickElement('Click the “Next page” link or “Load more” button.');
@@ -1369,7 +1404,8 @@
     const itemSel = sig.split('.').map((p, i) => (i === 0 ? p.toLowerCase() : '.' + CSS.escape(p))).join('');
     const rule = {
       name: location.hostname,
-      url: '^https?://' + location.hostname.replace(/\./g, '\\.') + '/',
+      // host, not hostname: a rule without the port never matches a site that has one.
+      url: '^https?://' + location.host.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/',
       next: cssPath(nextEl),
       content: container + ' > ' + itemSel,
       click: !nextEl.getAttribute('href') || JUNK_HREF_RE.test(nextEl.getAttribute('href')),
@@ -1384,6 +1420,14 @@
   // ---------------------------------------------------------------------------
   // Boot
   // ---------------------------------------------------------------------------
+
+  /** Forum engines that already load more as you scroll. */
+  function selfPagingSite() {
+    const generator = document.querySelector('meta[name="generator" i]');
+    if (generator && /\b(discourse|flarum)\b/i.test(generator.content)) return true;
+    // Flarum doesn't always send a generator meta, but its app shell has these.
+    return !!(document.getElementById('flarum-loading') || document.getElementById('flarum-json-payload'));
+  }
 
   function boot() {
     if (win.top !== win.self || win.__onward) return;
@@ -1404,18 +1448,24 @@
         const host = location.hostname;
         if (s.disabledHosts.includes(host)) { this.status = 'disabled on this site'; return; }
         if (s.exclude.some((x) => host === x || host.endsWith('.' + x))) { this.status = 'excluded host'; return; }
-        const generator = document.querySelector('meta[name="generator" i]');
-        if (!opts.force && generator && /\b(discourse|flarum)\b/i.test(generator.content)) {
+        const userRule = matchRule(s.rules, location.href);
+        const rule = userRule || matchRule(s.sourceRules, location.href);
+        // A rule the user wrote or picked means they want paging here.
+        if (!opts.force && !userRule && selfPagingSite()) {
           this.status = STANDING_BY;
-          console.info(TAG, 'generator meta says the site loads more by itself; standing by');
+          console.info(TAG, 'the page says it is Discourse or Flarum, which load more by themselves; standing by');
           return;
         }
-        const rule = matchRule(s.rules, location.href) || matchRule(s.sourceRules, location.href);
         const pager = new Pager(s, rule, {
           wrap: !!opts.wrap,
           force: !!opts.force,
           onLost: () => this.restart({ wrap: true, force: opts.force }),
-          onStandDown: () => { this.status = STANDING_BY; },
+          onStandDown: (hadPages) => {
+            this.status = STANDING_BY;
+            this.pager = null;
+            if (hadPages) toast(STANDING_BY + ', so Onward took its pages back out.');
+          },
+          onUrl: (u) => { this.expectUrl = u; },
         });
         if (pager.detect()) {
           this.pager = pager;
@@ -1458,9 +1508,10 @@
     let lastUrl = location.href;
     setInterval(() => {
       if (location.href === lastUrl) return;
-      const ours = app.pager && (location.href === app.pager.selfUrl || app.pager.separators.some((x) => x.url === location.href) || location.href === app.pager.startUrl);
+      const ours = location.href === app.expectUrl
+        || (app.pager && (location.href === app.pager.selfUrl || app.pager.separators.some((x) => x.url === location.href) || location.href === app.pager.startUrl));
       lastUrl = location.href;
-      if (!ours) setTimeout(() => app.restart(), 800);
+      if (!ours && !app.picking) setTimeout(() => app.restart(), 800);
     }, 1000);
   }
 

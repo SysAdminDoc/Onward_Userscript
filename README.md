@@ -24,7 +24,7 @@ The script updates itself from this repo.
 - **Adds only new content.** Items that repeat word for word from page 1 (sticky threads, "sort by" bars, headings) are dropped. If a site sends back a page it already sent, Onward stops.
 - **Handles the awkward cases.** Lists rendered by JavaScript get loaded in a hidden iframe. "Load more" buttons get clicked. Pages that scroll inside a div instead of the window work. Non-UTF-8 pages (Shift_JIS, GBK, windows-1251) are decoded properly, and lazy-loaded images get their real `src`.
 - **Survives React and friends.** If the site redraws its list and throws away the added pages, Onward switches to putting each page in its own copy of the list, which frameworks leave alone.
-- **Stays out of the way on sites that already scroll forever.** Discourse and Flarum forums are left alone. On any other site, Onward waits a few seconds before its first page, and if the site adds more items by itself in that time, Onward stands by.
+- **Stays out of the way on sites that already scroll forever.** Discourse and Flarum forums are left alone. On other sites Onward watches for a few seconds before its first page and whenever you reach the bottom. If the site adds items by itself, Onward takes its own pages back out and stands by.
 - **Is polite to servers.** At most 40 pages per visit by default. A failed request pauses loading until you click Retry. If added pages don't make the page any longer, it stops rather than loading forever.
 
 Each added page gets a slim bar with the page number, its URL, and buttons to jump to the top or stop. As you scroll, the address bar follows the page you're reading, so refreshing or sharing the link lands in the right place.
