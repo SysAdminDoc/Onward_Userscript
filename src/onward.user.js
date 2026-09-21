@@ -172,7 +172,7 @@
   const MORE_MULTI_RE = /\s|[぀-ヿ一-鿿가-힯]/; // multi-word or CJK "load more" phrases
   const JUNK_HREF_RE = /^\s*(javascript:|#|$)/i;
   // Onward fetches next pages with the reader's cookies, so a next link must never sign them out or delete something.
-  const DANGER_URL_RE = /(?:^|[^a-z])(log[-_]?out|log[-_]?off|sign[-_]?out|sign[-_]?off|unsubscribe)(?=[^a-z]|$)|[/=](delete|destroy|remove)(?=[/?&#]|$)/gi;
+  const DANGER_URL_RE = /(^|[^a-z])(log[-_]?out|log[-_]?off|sign[-_]?out|sign[-_]?off|unsubscribe)([^a-z]|$)|[/=](delete|destroy|remove)([/?&#]|$)/i;
 
   const normalize = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const stripDecor = (s) => s.replace(/^[\s<>›»→⟩❯▶▸«‹←⟨❮◀|\-–—:.()[\]]+|[\s<>›»→⟩❯▶▸«‹←⟨❮◀|\-–—:.()[\]]+$/g, '').trim();
@@ -268,19 +268,31 @@
     return !(u && samePage(u, pageUrl));
   };
 
-  /** The sign-out, unsubscribe and delete words in an address's path and query, or null for a broken address. */
-  function dangerWords(u) {
+  /**
+   * Where an address has a sign-out, unsubscribe or delete word: each path
+   * segment with one (by its position) and each query pair with one. null for
+   * a broken address.
+   */
+  function dangerPlaces(u) {
     let x;
     try { x = new URL(u); } catch (e) { return null; }
-    return Array.from((x.pathname + x.search).matchAll(DANGER_URL_RE), (m) => (m[1] || m[2]).toLowerCase().replace(/[-_]/g, ''));
+    const places = [];
+    x.pathname.split('/').forEach((seg, i) => { if (DANGER_URL_RE.test('/' + seg + '/')) places.push('p' + i + '=' + seg.toLowerCase()); });
+    for (const [k, v] of x.searchParams) if (DANGER_URL_RE.test('?' + k + '=' + v + '&')) places.push(('q=' + k + '=' + v).toLowerCase());
+    return places;
   }
 
-  /** u would sign the reader out or delete something. A word the page's own address already has (a search for "logout", a tag called delete) doesn't count. */
+  /**
+   * u would sign the reader out or delete something. A danger word in the
+   * same place in the page's own address doesn't count: the next page of a
+   * search for "logout" or of /tag/sign-out/ isn't signing out, but /logout
+   * from /help/logout-help is.
+   */
   function dangerousUrl(u, pageUrl) {
-    const words = dangerWords(u);
-    if (!words) return true;
-    const here = (pageUrl && dangerWords(pageUrl)) || [];
-    return words.some((w) => !here.includes(w));
+    const places = dangerPlaces(u);
+    if (!places) return true;
+    const here = (pageUrl && dangerPlaces(pageUrl)) || [];
+    return places.some((p) => !here.includes(p));
   }
 
   function absUrl(v, base) {

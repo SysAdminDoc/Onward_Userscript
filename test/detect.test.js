@@ -351,6 +351,13 @@ test('a danger word the page\'s own address has is not signing out', () => {
     ['https://example.com/search?q=delete', '/users/sign_out'],
     ['https://example.com/search?q=logout', '/search?q=logout&page=2&do=unsubscribe'],
     ['https://example.com/posts/7', '/posts/7/delete'],
+    // The word is in the page's address, but somewhere else.
+    ['https://example.com/help/logout-help', '/logout'],
+    ['https://example.com/forum/why-sign-out-matters', '/users/sign_out'],
+    ['https://example.com/search?q=delete', '/posts/7/delete'],
+    ['https://example.com/login?reason=logout', '/account/logout?next=/x'],
+    // The same segment, at another place in the path.
+    ['https://example.com/delete/archive', '/posts/7/delete'],
   ]) {
     assert.equal(next(dom(`${list}<nav class="pagination"><a rel="next" href="${href}">Next</a></nav>`, page), page), null, href + ' from ' + page);
   }
