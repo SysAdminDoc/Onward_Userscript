@@ -1285,7 +1285,9 @@
       if (this.stopBar) { this.removeBar(this.stopBar); this.stopBar = null; }
       if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
       this.refreshBars();
-      this.onScroll();
+      // Pressed at the end of the list, Resume loads the next page as asked; elsewhere paging carries on as you scroll.
+      if (this.nearEnd()) this.loadNext();
+      else this.onScroll();
     }
 
     /** Page bars show Stop or Resume depending on state; redraw them after a change. */
@@ -1567,7 +1569,12 @@
 
     // auto: asked for by scrolling, so dropped if the page no longer needs it.
     async loadNext(auto) {
-      if (this.busy || this.stopped) return;
+      if (this.busy) {
+        // A load you ask for while a scroll load waits its turn: that load is now yours, and stays.
+        if (!auto && this.waitingTurn) this.asked = true;
+        return;
+      }
+      if (this.stopped) return;
       // The list is gone (redrawn, or the site moved to another view): nothing loads or clicks into it.
       if (this.listGone()) return this.handleLost();
       if (this.page >= this.s.maxPages) return this.stop(`Stopped after ${this.s.maxPages} pages (change the limit in settings).`, 'end', 'limit');
@@ -1583,11 +1590,14 @@
       try {
         // Space requests out, however they were triggered (scroll, chain, menu, click).
         const wait = (this.lastRequestAt || 0) + this.s.spacing - Date.now();
+        this.waitingTurn = true;
+        this.asked = false;
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        this.waitingTurn = false;
         if (this.destroyed) return;
         if (ctl.signal.aborted) throw new Error('stopped');
         // Late images may have filled the page while this load waited its turn.
-        if (auto && !this.nearEnd()) {
+        if (auto && !this.asked && !this.nearEnd()) {
           this.removeBar(loading);
           this.busy = false;
           return;
