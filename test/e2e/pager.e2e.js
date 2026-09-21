@@ -7,13 +7,63 @@ const { chromium } = require('playwright');
 const site = require('./site');
 
 const SCRIPT = fs.readFileSync(path.join(__dirname, '../../src/onward.user.js'), 'utf8');
-const SHIM = `
-  window.__gm = window.__gm || {};
-  window.GM_getValue = (k, d) => (k in window.__gm ? window.__gm[k] : d);
-  window.GM_setValue = (k, v) => { window.__gm[k] = v; };
+// ONWARD_WORLD=isolated (npm run e2e:isolated) runs the script in an isolated
+// world, as Tampermonkey and Violentmonkey do, instead of the page's own. The
+// tests don't change: the page world reaches the script through DOM events and
+// attributes, the only things both worlds share.
+const WORLD = process.env.ONWARD_WORLD === 'isolated' ? 'isolated' : 'main';
+// GM storage in window.__gm, seeded from the page world's window.__gm, with
+// writes mirrored to data-onward-test-gm and reads counted in data-onward-test-reads.
+// Menu commands also answer an onward-test-menu event.
+const SHIM = `(() => {
+  const root = document.documentElement;
+  const seeded = root.getAttribute('data-onward-test-gm');
+  window.__gm = seeded ? JSON.parse(seeded) : (window.__gm || {});
+  const reads = {};
+  window.GM_getValue = (k, d) => {
+    reads[k] = (reads[k] || 0) + 1;
+    root.setAttribute('data-onward-test-reads', JSON.stringify(reads));
+    return k in window.__gm ? window.__gm[k] : d;
+  };
+  window.GM_setValue = (k, v) => { window.__gm[k] = v; root.setAttribute('data-onward-test-gm', JSON.stringify(window.__gm)); };
   window.__menu = {};
   window.GM_registerMenuCommand = (name, fn) => { window.__menu[name] = fn; };
+  document.addEventListener('onward-test-menu', (e) => { const fn = window.__menu[e.detail]; if (fn) fn(); });
+})();
 `;
+// In the page world when the script runs isolated: window.__gm reads the mirror, and window.__menu[name]() sends the event.
+const BRIDGE = `(() => {
+  const root = document.documentElement;
+  Object.defineProperty(window, '__gm', { configurable: true, get: () => JSON.parse(root.getAttribute('data-onward-test-gm') || '{}') });
+  window.__menu = new Proxy({}, { get: (_, name) => () => document.dispatchEvent(new CustomEvent('onward-test-menu', { detail: String(name) })) });
+})()`;
+
+/**
+ * Runs the script (after a GM shim) on the page, in the chosen world.
+ * Playwright's console and pageerror events report both worlds.
+ */
+async function inject(pg, shim = SHIM) {
+  if (WORLD === 'main') return pg.addScriptTag({ content: shim + SCRIPT });
+  // The page world's settings travel as an attribute.
+  await pg.evaluate(() => document.documentElement.setAttribute('data-onward-test-gm', JSON.stringify(window.__gm || {})));
+  await pg.evaluate(BRIDGE);
+  const cdp = await pg.context().newCDPSession(pg);
+  const { frameTree } = await cdp.send('Page.getFrameTree');
+  const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'onward-e2e', grantUniveralAccess: true });
+  const r = await cdp.send('Runtime.evaluate', { expression: shim + SCRIPT, contextId: executionContextId });
+  if (r.exceptionDetails) throw new Error('the script failed in the isolated world: ' + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || r.exceptionDetails.text));
+  pg.onwardWorld = { cdp, contextId: executionContextId };
+  return null;
+}
+
+/** Runs fn where the script runs (to stub a built-in it uses, say). */
+async function inScriptWorld(pg, fn) {
+  if (WORLD === 'main') return pg.evaluate(fn);
+  const { cdp, contextId } = pg.onwardWorld;
+  const r = await cdp.send('Runtime.evaluate', { expression: '(' + fn.toString() + ')()', contextId, awaitPromise: true });
+  if (r.exceptionDetails) throw new Error(r.exceptionDetails.text);
+  return r.result.value;
+}
 
 let server, browser, base;
 
@@ -28,7 +78,8 @@ test.after(async () => {
   server?.close();
 });
 
-async function open(url, prepare, arg) {
+/** Opens url in a new context; prepare runs in the page's world first, and shim where the script runs. */
+async function open(url, prepare, arg, shim = SHIM) {
   const ctx = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const pg = await ctx.newPage();
   const errors = [];
@@ -37,7 +88,7 @@ async function open(url, prepare, arg) {
   pg.on('console', (m) => logs.push(m.text()));
   await pg.goto(base + url, { waitUntil: 'load' });
   if (prepare) await pg.evaluate(prepare, arg);
-  await pg.addScriptTag({ content: SHIM + SCRIPT });
+  await inject(pg, shim);
   return { pg, ctx, errors, logs };
 }
 
@@ -59,6 +110,27 @@ const onwardText = () => Array.from(document.querySelectorAll('[data-onward]')).
 
 const endBar = () => Array.from(document.querySelectorAll('[data-onward]'))
   .some((w) => /No more|End of results|No more items/.test(w.shadowRoot?.textContent || ''));
+
+test('the script runs in the world the run says', async () => {
+  // In an isolated world the page can't see the GM shim; in the page's own world it can.
+  const { pg, ctx, logs } = await open('/blog?page=1');
+  assert.equal(await pg.evaluate(() => typeof window.GM_getValue), WORLD === 'isolated' ? 'undefined' : 'function');
+  // Its console messages reach the test once, from either world.
+  await pg.waitForTimeout(300);
+  assert.equal(logs.filter((l) => /\[Onward\] active:/.test(l)).length, 1);
+  await ctx.close();
+});
+
+test('a listener in the page\'s own world gets onward:page with the page number', async () => {
+  const { pg, ctx, errors } = await open('/blog?page=1', () => {
+    window.__pages = [];
+    addEventListener('onward:page', (e) => window.__pages.push(e.detail && e.detail.page));
+  });
+  assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
+  assert.deepEqual(await pg.evaluate(() => window.__pages), [2, 3, 4]);
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
 
 test('blog: appends pages 2-4, fixes lazy images, updates URL, stops at the end', async () => {
   const { pg, ctx, errors } = await open('/blog?page=1');
@@ -203,7 +275,7 @@ test('iframe fallback is sandboxed and silenced, and a frame buster cannot take 
     assert.equal(f.sandbox, 'allow-scripts allow-same-origin');
     assert.equal(f.allow, "autoplay 'none'");
   }
-  // The setter reports mid-silence (muted before pause), so judge each track by its last report.
+  // One report per track and frame, as the frame goes; keyed in case a frame reports twice.
   const last = {};
   for (const m of r.media) last[m.page + ' ' + m.where] = m;
   assert.equal(Object.keys(last).length, 2 * (site.LAST - 1), 'both tracks on every iframe page reported: ' + JSON.stringify(r.media));
@@ -263,7 +335,7 @@ test('element picker saves a working site rule', async () => {
   const logs = [];
   pg.on('console', (m) => logs.push(m.text()));
   await pg.goto(base + '/blog?page=1');
-  await pg.addScriptTag({ content: SHIM + SCRIPT });
+  await inject(pg);
   // Don't return the picker's promise: evaluate would wait for clicks that can't happen yet.
   await pg.evaluate(() => { window.__menu['Pick next link and content…'](); });
   const clickOn = async (sel) => {
@@ -690,7 +762,7 @@ test('an error inside the picker is reported, and Onward pages again', async () 
   await pg.mouse.move(box.x + 3, box.y + 3);
   await pg.mouse.click(box.x + 3, box.y + 3);
   // Building the item selector throws once.
-  await pg.evaluate(() => { const real = CSS.escape; CSS.escape = () => { CSS.escape = real; throw new Error('boom'); }; });
+  await inScriptWorld(pg, () => { const real = CSS.escape; CSS.escape = () => { CSS.escape = real; throw new Error('boom'); }; });
   const item = pg.locator('li.post p').first();
   await item.scrollIntoViewIfNeeded();
   const ib = await item.boundingBox();
@@ -924,10 +996,9 @@ test('Stop while a page waits its turn sends no request', async () => {
 
 for (const api of [true, false]) {
   test(`a pushState route change restarts Onward (${api ? 'Navigation API' : 'polling fallback'})`, async () => {
-    const { pg, ctx, errors, logs } = await open('/spapush?page=1', api ? null : () => {
-      // Pretend the browser has no Navigation API.
-      Object.defineProperty(window, 'navigation', { value: undefined, configurable: true });
-    });
+    // Without the Navigation API, in the world the script runs in.
+    const noNav = "Object.defineProperty(window, 'navigation', { value: undefined, configurable: true });";
+    const { pg, ctx, errors, logs } = await open('/spapush?page=1', null, null, api ? SHIM : noNav + SHIM);
     const started = () => logs.filter((l) => /\[Onward\] active:/.test(l)).length;
     await pg.waitForTimeout(300);
     assert.equal(started(), 1, 'running on the first route');
@@ -937,6 +1008,8 @@ for (const api of [true, false]) {
     const took = Date.now() - t0;
     assert.equal(started(), 2, 'restarted on the new route');
     if (api) assert.ok(took <= 300, `restarted within 300 ms (took ${took} ms)`);
+    // Polling waits 800 ms after it notices, so a quick restart means the stub missed the script.
+    else assert.ok(took >= 700, `the polling fallback restarted it (took ${took} ms)`);
     assert.deepEqual(errors, []);
     await ctx.close();
   });
@@ -1316,6 +1389,7 @@ const SHARED_SHIM = `
   window.GM_setValue = (k, v) => { const all = gmLoad(); all[k] = v; localStorage.setItem('__gm', JSON.stringify(all)); };
   window.__menu = {};
   window.GM_registerMenuCommand = (name, fn) => { window.__menu[name] = fn; };
+  document.addEventListener('onward-test-menu', (e) => { const fn = window.__menu[e.detail]; if (fn) fn(); });
 `;
 
 test('only one tab refreshes the rule lists at a time', async () => {
@@ -1327,9 +1401,9 @@ test('only one tab refreshes the rule lists at a time', async () => {
   const list = base + '/rules.json?mode=good';
   await a.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourcesUpdated: 0, sourcesTried: 0 })), list);
   site.hits.rules = 0;
-  await a.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(a, SHARED_SHIM);
   await a.waitForTimeout(300); // the first tab is mid-download (1.5 s) when the second starts
-  await b.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(b, SHARED_SHIM);
   // The second tab's own start backs off; its Settings button is refused by the lock.
   await b.evaluate(() => { window.__menu['Settings'](); });
   await b.getByRole('button', { name: 'Update rule lists now' }).click();
@@ -1352,7 +1426,7 @@ test('a rule list that comes back as an error page keeps its last good copy', as
   const list = base + '/rules.json?mode=html';
   const rules = [1, 2, 3].map((k) => ({ name: '', url: `^https://keep${k}\\.example/`, next: 'a.n', content: undefined, insert: '', mode: '', click: false, excludeUrl: '' }));
   await pg.evaluate(([l, r]) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourceCache: { [l]: { rules: r, at: 1 } }, sourceRules: r, sourcesUpdated: 0, sourcesTried: 0 })), [list, rules]);
-  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(pg, SHARED_SHIM);
   await pg.waitForTimeout(2500);
   const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
   assert.equal(stored.sourceCache[list].rules.length, 3, 'the cached copy survived');
@@ -1370,7 +1444,7 @@ test('rules 0.1.0 cached are kept when the first refresh after the update fails'
   const list = base + '/rules.json?mode=html';
   const rules = [1, 2, 3].map((k) => ({ name: '', url: `^https://keep${k}\\.example/`, next: 'a.n', insert: '', mode: '', click: false, excludeUrl: '' }));
   await pg.evaluate(([l, r]) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourceRules: r, sourcesUpdated: 0, sourcesTried: 0 })), [list, rules]);
-  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(pg, SHARED_SHIM);
   await pg.waitForTimeout(2500);
   const stored = await pg.evaluate(() => JSON.parse(localStorage.getItem('__gm')));
   assert.equal(stored.sourceRules.length, 3, 'still there');
@@ -1387,14 +1461,14 @@ test('a packed rule list is used on the site it names', async () => {
   await pg.goto(base + '/blog?page=1');
   const list = base + '/rules.json?mode=site';
   await pg.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourcesUpdated: 0, sourcesTried: 0 })), list);
-  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(pg, SHARED_SHIM);
   await pg.waitForFunction((l) => ((JSON.parse(localStorage.getItem('__gm') || '{}').sourceCache || {})[l] || {}).count > 0, list, { timeout: 10000 });
   const entry = await pg.evaluate((l) => JSON.parse(localStorage.getItem('__gm')).sourceCache[l], list);
   assert.equal(entry.count, 201);
   assert.ok(JSON.stringify(entry).length < 6000, 'packed: ' + JSON.stringify(entry).length + ' characters');
   // The next page load reads the packed list and pages this site by its rule.
   await pg.reload();
-  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(pg, SHARED_SHIM);
   assert.ok(await scrollToEnd(pg, endBar), 'paged to the end');
   assert.ok(logs.some((l) => /active: rule/.test(l)), 'by the list rule');
   await ctx.close();
@@ -1403,12 +1477,10 @@ test('a packed rule list is used on the site it names', async () => {
 test('rule lists are read from storage once per page, however often Onward looks again', async () => {
   // The last page has no next link, so Onward looks three times (now, after 1.5 s and after 4 s).
   const { pg, ctx, errors } = await open('/blog?page=4', () => {
-    window.__reads = {};
-    const data = { sourceRules: [{ name: '', url: '^https://nowhere\\.example/', next: 'a.n', insert: '', mode: '', click: false, excludeUrl: '' }], sourceCache: {} };
-    window.__gm = new Proxy(data, { has(t, k) { window.__reads[k] = (window.__reads[k] || 0) + 1; return k in t; } });
+    window.__gm = { sourceRules: [{ name: '', url: '^https://nowhere\\.example/', next: 'a.n', insert: '', mode: '', click: false, excludeUrl: '' }], sourceCache: {} };
   });
   await pg.waitForTimeout(6500);
-  const reads = await pg.evaluate(() => window.__reads);
+  const reads = await pg.evaluate(() => JSON.parse(document.documentElement.getAttribute('data-onward-test-reads') || '{}'));
   assert.ok(reads.rules >= 3, 'it did look three times: ' + reads.rules);
   assert.equal(reads.sourceRules, 1);
   assert.equal(reads.sourceCache, 1);
@@ -1422,7 +1494,7 @@ test('a tab never clears a refresh lock another tab has taken over', async () =>
   await pg.goto(base + '/blog?page=1');
   const list = base + '/rules.json?mode=good';
   await pg.evaluate((l) => localStorage.setItem('__gm', JSON.stringify({ sources: [l], sourcesUpdated: 0, sourcesTried: 0 })), list);
-  await pg.addScriptTag({ content: SHARED_SHIM + SCRIPT });
+  await inject(pg, SHARED_SHIM);
   await pg.waitForTimeout(400); // mid-download (1.5 s)
   await pg.evaluate(() => {
     const g = JSON.parse(localStorage.getItem('__gm'));

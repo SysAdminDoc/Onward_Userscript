@@ -63,28 +63,28 @@ function route(url, req) {
   }
   if (u.pathname === '/buster') {
     // Script-rendered like /spa, so Onward needs the iframe fallback, plus a
-    // frame buster in its own script and an autoplaying track that reports
-    // its muted state to the parent.
+    // frame buster in its own script and autoplaying tracks that report their
+    // state to the parent.
     const items = JSON.stringify(Array.from({ length: PER }, (_, i) => `Card ${(n - 1) * PER + i + 1}`));
     return { body: page('Buster ' + n, `<section class="grid" id="cards"></section>${pager('/buster?page=', n, 'Next')}
       <audio id="snd" src="/tone.wav" autoplay loop></audio>
       <script>if (top !== self) top.location.href = '/buster?page=1&busted=1';</script>
       <script>for (const t of ${items}) { const a = document.createElement('article'); a.className = 'card'; a.style.height = '200px'; a.textContent = t + ' with enough text to count'; document.getElementById('cards').append(a); }
-        // Report from the setter itself: volumechange is queued as a task and
-        // Onward removes the frame before that task would run.
-        const muted = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'muted');
-        const report = (el, where) => Object.defineProperty(el, 'muted', { configurable: true, get() { return muted.get.call(this); }, set(v) {
-          muted.set.call(this, v);
-          if (top !== self) parent.postMessage({ type: 'media', page: location.search, where, muted: muted.get.call(this), paused: this.paused }, '*');
-        } });
-        report(document.getElementById('snd'), 'light');
+        const tracks = [[document.getElementById('snd'), 'light']];
         // A second track inside an open shadow root.
         const host = document.createElement('div');
         document.body.append(host);
         const inner = document.createElement('audio');
         inner.src = '/tone.wav'; inner.autoplay = true; inner.loop = true;
         host.attachShadow({ mode: 'open' }).append(inner);
-        report(inner, 'shadow');</script>`) };
+        tracks.push([inner, 'shadow']);
+        // Each track reports as the frame goes away, which is after Onward
+        // silenced it. Events like volumechange are queued as tasks and the frame
+        // is gone before they'd run, and a setter override here would only see
+        // calls from this world, not from a script in an isolated one.
+        addEventListener('pagehide', () => {
+          if (top !== self) for (const [el, where] of tracks) parent.postMessage({ type: 'media', page: location.search, where, muted: el.muted, paused: el.paused }, '*');
+        });</script>`) };
   }
   if (u.pathname === '/tone.wav') return { body: wav(), type: 'audio/wav' };
   if (u.pathname === '/selfscroll') {

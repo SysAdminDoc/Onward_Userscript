@@ -93,6 +93,7 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 npm install
 npm test          # detection unit tests (jsdom)
 npm run e2e       # the real script in headless Chromium against a local fixture site
+npm run e2e:isolated   # the same, with the script in an isolated world as userscript managers run it
 npm run check     # syntax check and version consistency
 npm run screenshots
 npm run smoke     # real sites from scripts/smoke-sites.json, checked against what Onward should do there
