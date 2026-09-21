@@ -1408,7 +1408,8 @@
       announce('Stopped by you.');
     }
 
-    resume() {
+    // loadNow: false when the caller loads the pages itself (the menu's commands).
+    resume(loadNow = true) {
       if (!this.userStopped || this.destroyed) return;
       this.userStopped = false;
       this.stopped = false;
@@ -1421,7 +1422,7 @@
       this.showManualBar();
       // Pressed at the end of the list, Resume loads the next page as asked (in
       // manual mode the bar's button does that); elsewhere paging carries on as you scroll.
-      if (!this.manual && this.nearEnd()) this.loadNext();
+      if (loadNow && !this.manual && this.nearEnd()) this.loadNext();
       else this.onScroll();
     }
 
@@ -2847,7 +2848,7 @@
         if (!p) { toast('Nothing to load: ' + app.status, 'err'); return null; }
         if (p.userStopped) {
           toast('Resuming. Paging was stopped by you.', 'ok');
-          p.resume();
+          p.resume(false);
         } else if (p.paused) {
           toast('Trying again. Paging was paused after an error.', 'ok');
         } else if (p.stopped) {

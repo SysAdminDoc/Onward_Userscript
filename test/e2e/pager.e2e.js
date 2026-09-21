@@ -2159,6 +2159,21 @@ for (const slow of [false, true]) {
   });
 }
 
+test('"Load 5 more pages" after a Stop at the end of the list loads 5 pages, not 6', async () => {
+  const { pg, ctx, errors } = await open('/long?page=1', () => { window.__gm = { spacing: 300, threshold: 0.3 }; });
+  await pg.evaluate(() => { window.__menu['Run Onward here anyway'](); });
+  await pg.evaluate(() => { window.__menu['Load next page now'](); });
+  await pg.waitForFunction(() => document.querySelectorAll('#list > li.post').length === 10);
+  await pg.getByRole('button', { name: 'Stop', exact: true }).first().click();
+  await pg.evaluate(() => window.scrollTo(0, document.getElementById('list').getBoundingClientRect().bottom + scrollY - innerHeight + 50));
+  await pg.waitForTimeout(300);
+  await pg.evaluate(() => { window.__menu['Load 5 more pages'](); });
+  await pg.waitForTimeout(6000);
+  assert.equal(await pg.evaluate(() => document.querySelectorAll('#list > li.post').length), 35, 'pages 3 to 7');
+  assert.deepEqual(errors, []);
+  await ctx.close();
+});
+
 test('load-more button is clicked until it disappears', async () => {
   const { pg, ctx, errors } = await open('/more');
   assert.ok(await scrollToEnd(pg, endBar));
