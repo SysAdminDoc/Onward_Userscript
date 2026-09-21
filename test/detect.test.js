@@ -245,6 +245,17 @@ test('chooseRule: site rules first, render retries, last page, then list rules',
   assert.deepEqual(O.chooseRule([excluded], [list], href, page, 0), { rule: list }, 'an excluded site rule does not count');
 });
 
+test('rules from a downloaded list never click; rules you write can', () => {
+  const clicky = [{ url: '^https://shop\\.example/', next: 'button.buy', click: true }];
+  assert.equal(O.normalizeRules(clicky)[0].click, true, 'a rule written in Settings keeps click');
+  assert.equal(O.normalizeRules(clicky, { fromList: true })[0].click, false, 'a list rule loses it');
+  assert.equal(O.acceptRuleList(undefined, JSON.stringify(clicky), 1).entry.rules[0].click, false, 'downloads are stored without it');
+  // A list cached by an older version still can't click.
+  const d = dom('<button class="buy">Buy</button>', 'https://shop.example/cart');
+  const legacy = [{ url: '^https://shop\\.example/', next: 'button.buy', click: true }];
+  assert.equal(O.chooseRule([], legacy, 'https://shop.example/cart', d, 2).rule, null, 'no clicking rule from a list');
+});
+
 test('a rule list that comes back broken keeps the last good copy', () => {
   const good = { rules: O.normalizeRules([{ url: '^https://a\\.com/', next: 'a.n' }, { url: '^https://b\\.com/', next: 'a.n' }, { url: '^https://c\\.com/', next: 'a.n' }]), at: 1 };
   const html = '<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center></body></html>'.padEnd(122, ' ');

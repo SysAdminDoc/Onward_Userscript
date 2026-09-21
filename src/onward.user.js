@@ -663,8 +663,13 @@
   // Rules
   // ---------------------------------------------------------------------------
 
-  /** Accepts Onward rules, AutoPagerize/wedata items, or a mix. */
-  function normalizeRules(input) {
+  /**
+   * Accepts Onward rules, AutoPagerize/wedata items, or a mix. Rules from a
+   * downloaded list (fromList) never click: a compromised list could otherwise
+   * press any button on any site it matches.
+   */
+  function normalizeRules(input, opts) {
+    const fromList = !!(opts && opts.fromList);
     const list = Array.isArray(input) ? input : (input && Array.isArray(input.rules) ? input.rules : []);
     const out = [];
     for (const raw of list) {
@@ -677,7 +682,7 @@
         content: r.content || r.pageElement,
         insert: r.insert || r.insertBefore || '',
         mode: r.mode || '',
-        click: !!r.click,
+        click: !fromList && !!r.click,
         excludeUrl: typeof r.excludeUrl === 'string' ? r.excludeUrl : '',
       };
       if (typeof rule.url !== 'string' || !rule.url) continue;
@@ -730,7 +735,9 @@
     if (rule) return { rule, mine: true };
     if (mine.some((r) => r.content && queryAll(doc, r.content).length > 0)) return { rule: null, lastPage: true };
     if (mine.length && attempt < 2) return { rule: null, wait: true };
-    return { rule: fittingRule(matchingRules(listRules, href), doc, href) };
+    // Lists cached before list rules lost their clicks are held to the same rule here.
+    const lists = matchingRules(listRules, href).map((r) => (r.click ? Object.assign({}, r, { click: false }) : r));
+    return { rule: fittingRule(lists, doc, href) };
   }
 
   // ---------------------------------------------------------------------------
@@ -1539,7 +1546,7 @@
   function acceptRuleList(prev, text, now) {
     let parsed;
     try { parsed = JSON.parse(text); } catch (e) { return { entry: prev, error: 'not a rule list (not JSON)' }; }
-    const rules = normalizeRules(parsed);
+    const rules = normalizeRules(parsed, { fromList: true });
     if (!rules.length) return { entry: prev, error: 'no rules in it' };
     if (prev && prev.rules.length && rules.length < prev.rules.length / 2) {
       return { entry: prev, error: `only ${rules.length} rules, down from ${prev.rules.length}` };
