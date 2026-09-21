@@ -1863,13 +1863,19 @@
 
     // Single-page apps change the URL without a reload; start over when that happens.
     let lastUrl = location.href;
-    setInterval(() => {
+    const urlChanged = (delay) => {
       if (location.href === lastUrl) return;
       const ours = location.href === app.expectUrl
         || (app.pager && (location.href === app.pager.selfUrl || app.pager.separators.some((x) => x.url === location.href) || location.href === app.pager.startUrl));
       lastUrl = location.href;
-      if (!ours && !app.picking) setTimeout(() => app.restart(), 800);
-    }, 1000);
+      if (!ours && !app.picking) setTimeout(() => app.restart(), delay);
+    };
+    // The Navigation API says so as soon as a route changes; polling stays for
+    // browsers without it (and as a backstop), giving the app longer to render.
+    if (win.navigation && typeof win.navigation.addEventListener === 'function') {
+      win.navigation.addEventListener('navigatesuccess', () => urlChanged(150));
+    }
+    setInterval(() => urlChanged(800), 1000);
   }
 
   return {

@@ -212,6 +212,15 @@ function route(url) {
     if (n > 1) hits.spaced.push(Date.now());
     return { body: page('Spaced ' + n, `<ul class="posts">${posts(n)}</ul>${pager('/spaced?page=', n, 'Next')}`) };
   }
+  if (u.pathname === '/spapush') {
+    // A filter button swaps the list and pushes a new address, as SPAs do.
+    const filtered = JSON.stringify(posts(1).replace(/Post (\d+)/g, 'Filtered $1'));
+    return { body: page('SPA push ' + n, `<button id="filter">Filter</button><div id="app"><ul class="posts">${posts(n)}</ul>${pager('/spapush?page=', n, 'Next')}</div>
+      <script>document.getElementById('filter').onclick = () => {
+        history.pushState({}, '', '/spapush?page=1&filter=x');
+        document.querySelector('#app ul.posts').innerHTML = ${filtered};
+      };</script>`) };
+  }
   if (u.pathname === '/generator') {
     return { body: page('Generator ' + n, `<main><ul class="posts">${posts(n)}</ul>${pager('/generator?page=', n, 'Next')}</main>`,
       '<meta name="generator" content="Discourse 2026.9.0-latest">') };

@@ -666,6 +666,26 @@ test('page requests are spaced out, by the configured gap', async () => {
   await ctx.close();
 });
 
+for (const api of [true, false]) {
+  test(`a pushState route change restarts Onward (${api ? 'Navigation API' : 'polling fallback'})`, async () => {
+    const { pg, ctx, errors, logs } = await open('/spapush?page=1', api ? null : () => {
+      // Pretend the browser has no Navigation API.
+      Object.defineProperty(window, 'navigation', { value: undefined, configurable: true });
+    });
+    const started = () => logs.filter((l) => /\[Onward\] active:/.test(l)).length;
+    await pg.waitForTimeout(300);
+    assert.equal(started(), 1, 'running on the first route');
+    await pg.click('#filter');
+    const t0 = Date.now();
+    while (started() < 2 && Date.now() - t0 < 3000) await pg.waitForTimeout(25);
+    const took = Date.now() - t0;
+    assert.equal(started(), 2, 'restarted on the new route');
+    if (api) assert.ok(took <= 300, `restarted within 300 ms (took ${took} ms)`);
+    assert.deepEqual(errors, []);
+    await ctx.close();
+  });
+}
+
 test('a redirect back to a page already shown ends paging', async () => {
   const { pg, ctx, errors } = await open('/redir?page=1');
   assert.ok(await scrollToEnd(pg, endBar), 'paging ended');

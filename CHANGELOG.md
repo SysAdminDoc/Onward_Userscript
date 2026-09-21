@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- On single-page sites Onward notices a route change straight away through the browser's Navigation API, instead of within a second or two. Browsers without it are still covered by the old check.
 - Page requests to a site are at least a second apart, however fast you scroll, so paging doesn't get you rate-limited or banned. The gap is a setting.
 - Onward only loads next pages from the page's own origin (same scheme, host and port), apart from switching an `http` link to `https` on a secure page. A page that redirects to another site is refused. Rule-list downloads no longer send your cookies.
 - Rules from a downloaded rule list can no longer make Onward click buttons. Only rules you write or pick yourself can use `click`.
