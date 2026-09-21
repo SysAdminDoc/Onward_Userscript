@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Items whose class happens to contain "page" (a `product-page-card`, say) are no longer dropped from added pages as if they were the pager. Only a part whose links are mostly page numbers or next and previous counts as a pager.
 - A number in a table next to a link to the following number (a stats table, a scoreboard) is no longer taken for a pager. A pager without a telling class now has to show a run of page numbers.
 - Onward runs on managers that only offer the async `GM.*` functions and no menu, such as Userscripts for Safari. It reads its settings once when a page opens (the big rule lists only if you use some), saves through `GM.setValue`, and without a menu shows a small "Onward" button in the corner and an "Onward…" button on its page bars, which open Settings with the menu's commands in it. Not yet tried on a real Apple device.
 - The site's own pager under the list now follows the pages Onward adds. After page 3 it shows page 3 as the current one and its links lead on from there, where it used to still point at page 2. Turning Onward off puts the original back.

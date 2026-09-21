@@ -699,7 +699,17 @@
     if (SKIP_TAGS.has(c.tagName)) return true;
     if (c.matches('nav, [role="navigation"]')) return true;
     if (nextEl && (c === nextEl || c.contains(nextEl)) && normalize(c.textContent).length < 300) return true;
-    return PAGINATION_RE.test(attrText(c)) && c.querySelectorAll('a').length > 2 && normalize(c.textContent).length < 300;
+    if (!PAGINATION_RE.test(attrText(c)) || normalize(c.textContent).length >= 300) return false;
+    // A class with "page" in it isn't enough (li.product-page-card): most links
+    // have to be page numbers or next/previous.
+    const links = Array.from(c.querySelectorAll('a'));
+    if (links.length <= 2) return false;
+    const pagerish = links.filter((a) => {
+      const raw = normalize(a.textContent);
+      const t = stripDecor(raw);
+      return /^\d{1,5}$/.test(t) || NEXT_SET.has(t) || PREV_WORD_RE.test(t) || ARROWS.test(raw) || BACK_ARROWS.test(raw) || t === '…' || t === '...';
+    });
+    return pagerish.length * 2 >= links.length;
   }
 
   function itemShape(items) {

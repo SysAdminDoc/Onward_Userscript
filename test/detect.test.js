@@ -424,6 +424,16 @@ test('an unlabelled pager needs a run of page numbers; a number next to a link i
   assert.equal(next(late, 'https://example.com/l/9').url, 'https://example.com/l/10');
 });
 
+test('items whose class merely contains "page" are kept', () => {
+  const cards = Array.from({ length: 6 }, (_, i) => `<li class="product-page-card"><a href="/p/${i}">Lamp ${i}</a> <a href="/p/${i}#reviews">Reviews</a> <a href="/cart/add/${i}">Add</a><p>A lamp with a long enough description ${i}.</p></li>`).join('');
+  const d = dom(`<ul class="products">${cards}</ul><div class="pagination"><a href="/list/?page=1">1</a><a href="/list/?page=2">2</a><a href="/list/?page=3">Next</a></div>`);
+  const r = O.findContent(d, {});
+  assert.equal(r.items.length, 6, 'every card');
+  // A real pager inside the list is still left out.
+  const inside = dom(`<ul class="posts">${items(5)}<li class="pagination"><a href="?page=1">1</a><a href="?page=2">2</a><a href="?page=3">3</a><a href="?page=2">Next</a></li></ul>`);
+  assert.equal(O.findContent(inside, {}).items.length, 5);
+});
+
 test('rules: AutoPagerize/wedata items normalize and match; catch-alls are skipped', () => {
   const rules = O.normalizeRules([
     { name: 'generic', data: { url: '^https?://.', nextLink: '//a[@rel="next"]', pageElement: '//*[contains(@class,"autopagerize_page_element")]' } },
