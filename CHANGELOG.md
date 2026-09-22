@@ -68,6 +68,7 @@
 - Saving settings applies them to the running pager without a reload. Threshold, page cap, bar visibility and URL sync take effect right away; changes to rules, mode or exclusions restart the pager.
 - Images on added pages now get `loading="lazy"` and `decoding="async"`, so the browser defers offscreen images instead of loading them all at once.
 - A new setting, "Prefetch the next page while you read", fetches the next page's HTML as soon as the current one lands, so scrolling to the next page is instant. Off by default. It uses `fetch`, not Speculation Rules, and skips manual mode and iframe mode.
+- A new setting, "Skip offscreen pages while scrolling", applies `content-visibility: auto` with a measured intrinsic size to earlier pages once page 3 or later lands in wrapped mode, so the browser can skip rendering them. Off by default.
 
 ## [0.1.0] (2026-09-21)
 
