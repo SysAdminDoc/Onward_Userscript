@@ -2349,7 +2349,13 @@
       }
       store.set('sources', sources);
       close();
-      toast('Settings saved. Reload the page to apply them.', 'ok');
+      const fresh = loadSettings();
+      const p = app.pager;
+      const needRestart = !p || fresh.mode !== s.mode || fresh.runOn !== s.runOn || fresh.skipPaths !== s.skipPaths
+        || JSON.stringify(fresh.rules) !== JSON.stringify(s.rules) || JSON.stringify(fresh.exclude) !== JSON.stringify(s.exclude)
+        || JSON.stringify(fresh.disabledHosts) !== JSON.stringify(s.disabledHosts) || JSON.stringify(fresh.allowHosts) !== JSON.stringify(s.allowHosts);
+      if (needRestart) { app.restart(); toast('Settings saved and applied.', 'ok'); }
+      else { if (p) p.s = fresh; toast('Settings saved and applied.', 'ok'); }
     };
     const panel = h('div', { class: 'p', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Onward settings' },
       h('h2', {}, 'Onward ' + VERSION),
