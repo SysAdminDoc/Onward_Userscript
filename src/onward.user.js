@@ -54,6 +54,7 @@
     hostLoadPages: {},     // per-host override of loadPages: { host: 'auto' | 'click' }
     newTabLinks: false,    // open links on added pages in a new tab
     prefetch: false,       // fetch the next page's HTML as soon as the current one lands
+    skipOffscreen: false,  // content-visibility:auto on old pages, so the browser skips rendering them
     skipFooterMs: 30000,   // how long "Skip to footer" holds loading off
     runOn: 'all',          // all | listed (only the hosts in allowHosts)
     allowHosts: [],
@@ -2042,6 +2043,16 @@
           this.anchor.parentNode.insertBefore(frag, this.anchor);
         }
         release();
+        if (this.s.skipOffscreen && this.page >= 3 && this.wrap) {
+          for (const el of this.inserted) {
+            if (el === this.lastInserted) continue;
+            if (el.style && !el.style.contentVisibility) {
+              const h = el.getBoundingClientRect().height;
+              el.style.contentVisibility = 'auto';
+              el.style.containIntrinsicSize = 'auto ' + Math.round(h) + 'px';
+            }
+          }
+        }
         // Only now is the page on screen: a failure before this stays retryable.
         for (const k of freshKeys) this.itemKeys.add(k);
         this.seen.add(stripHash(url));
@@ -2382,6 +2393,7 @@
       h('label', {}, 'Update the address bar while scrolling', chk('updateUrl')),
       h('label', {}, 'Open links on added pages in a new tab', chk('newTabLinks')),
       h('label', {}, 'Prefetch the next page while you read', chk('prefetch')),
+      h('label', {}, 'Skip offscreen pages while scrolling', chk('skipOffscreen')),
       h('label', {}, 'Loading mode', modeSel),
       h('label', {}, 'Load pages', loadSel),
       h('label', {}, 'Load pages on ' + location.hostname, hostLoadSel),
