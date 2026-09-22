@@ -53,6 +53,7 @@
     loadPages: 'auto',     // auto | click: load as you scroll, or only when you press the bar's button
     hostLoadPages: {},     // per-host override of loadPages: { host: 'auto' | 'click' }
     newTabLinks: false,    // open links on added pages in a new tab
+    prefetch: false,       // fetch the next page's HTML as soon as the current one lands
     skipFooterMs: 30000,   // how long "Skip to footer" holds loading off
     runOn: 'all',          // all | listed (only the hosts in allowHosts)
     allowHosts: [],
@@ -1415,6 +1416,7 @@
       this.inserted = [];  // nodes we added, so destroy() can take them back out
       this.ours = new WeakSet();
       this.abort = new AbortController();  // cancels in-flight loads on destroy()
+      this.prefetched = null;  // { url, bytes, type, finalUrl } from a background fetch
       this.startUrl = location.href;
       this.mode = (rule && rule.mode) || settings.mode;
       this.onScroll = this.onScroll.bind(this);
@@ -1948,7 +1950,9 @@
         ({ doc, dispose } = await loadViaIframe(url, (d) => extractItems(d, this).length > 0, 0, signal));
         try { if (/^https?:/.test(doc.location.href)) finalUrl = doc.location.href; } catch (e) { /* keep the requested URL */ }
       } else {
-        const r = await fetchBytes(url, signal);
+        const pf = this.prefetched && this.prefetched.url === url ? this.prefetched : null;
+        this.prefetched = null;
+        const r = pf || await fetchBytes(url, signal);
         if (this.destroyed) return;
         finalUrl = r.finalUrl || url;
         if (safeOrigin(finalUrl) !== location.origin) throw new Error('redirected to another site');
@@ -2052,8 +2056,15 @@
         // Guard against loading forever when added pages don't make the page longer.
         this.noGrowth = this.metrics().height > heightBefore ? 0 : this.noGrowth + 1;
         if (this.noGrowth >= 2) return this.stop('Pages were added but the page isn’t getting longer, so Onward stopped.', 'err', 'nogrowth');
-        if (next) this.next = next;
-        else this.stop('No more pages.');
+        if (next) {
+          this.next = next;
+          if (this.s.prefetch && next.url && !this.manual && this.mode !== 'iframe') {
+            const pfUrl = next.url;
+            fetchBytes(pfUrl, this.abort.signal).then((r) => {
+              if (!this.destroyed && this.next && this.next.url === pfUrl) this.prefetched = Object.assign({ url: pfUrl }, r);
+            }).catch(() => {});
+          }
+        } else this.stop('No more pages.');
       } finally {
         dispose();
       }
@@ -2370,6 +2381,7 @@
       h('label', {}, 'Show a bar between pages', chk('separators')),
       h('label', {}, 'Update the address bar while scrolling', chk('updateUrl')),
       h('label', {}, 'Open links on added pages in a new tab', chk('newTabLinks')),
+      h('label', {}, 'Prefetch the next page while you read', chk('prefetch')),
       h('label', {}, 'Loading mode', modeSel),
       h('label', {}, 'Load pages', loadSel),
       h('label', {}, 'Load pages on ' + location.hostname, hostLoadSel),
