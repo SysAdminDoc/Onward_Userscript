@@ -2387,7 +2387,30 @@
         h('div', { class: 'hint' }, `Onward or AutoPagerize/wedata JSON. ${Object.values(store.get('sourceCache') || {}).reduce((n, e) => n + listCount(e), 0) || (store.get('sourceRules') || []).length} cached rules.`),
         h('div', { class: 'row', style: 'justify-content:flex-start' }, h('button', { onclick: () => updateSources(srcs.value.split(/\s+/).filter(Boolean), true) }, 'Update rule lists now'))),
       err,
-      h('div', { class: 'row' }, h('button', { onclick: close }, 'Cancel'), h('button', { class: 'pri', onclick: save }, 'Save')));
+      h('div', { class: 'row' },
+        h('button', { onclick: () => {
+          const data = {};
+          for (const key of Object.keys(DEFAULTS)) if (!HEAVY_KEYS.has(key)) data[key] = store.get(key);
+          const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+          const a = h('a', { href: URL.createObjectURL(blob), download: 'onward-settings.json' }); a.click(); URL.revokeObjectURL(a.href);
+        } }, 'Export'),
+        h('button', { onclick: () => {
+          const inp = h('input', { type: 'file', accept: '.json' });
+          inp.addEventListener('change', () => {
+            const f = inp.files && inp.files[0]; if (!f) return;
+            const r = new FileReader();
+            r.onload = () => {
+              let d; try { d = JSON.parse(r.result); } catch (e) { err.textContent = 'Not valid JSON.'; return; }
+              if (!d || typeof d !== 'object') { err.textContent = 'Not a settings object.'; return; }
+              for (const key of Object.keys(DEFAULTS)) if (!HEAVY_KEYS.has(key) && key in d) store.set(key, d[key]);
+              toast('Settings imported. Reload the page to apply them.', 'ok');
+              close();
+            };
+            r.readAsText(f);
+          });
+          inp.click();
+        } }, 'Import'),
+        h('button', { onclick: close }, 'Cancel'), h('button', { class: 'pri', onclick: save }, 'Save')));
     const bg = h('div', { class: 'bg', onclick: (e) => { if (e.target === bg) close(); } }, panel);
     sr.appendChild(bg);
     document.documentElement.appendChild(host);
