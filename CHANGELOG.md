@@ -61,6 +61,10 @@
 - Host rules are now split into up to eight buckets (about 400 rules each), so a page on a site with a rule unpacks only one bucket instead of all 3,382 host rules. The first lookup dropped from 5.9 ms to 1.7 ms. Small lists keep one bucket; the store grew from 321 KB to 336 KB, still under the 350 KB budget. Lists stored without buckets still read.
 - A new setting, "Open links on added pages in a new tab", adds `target="_blank"` and `rel="noopener"` to every link on pages Onward loads. Off by default.
 - Settings now carry a schema version. Future changes to the settings shape will migrate from the stored version automatically.
+- A Next submit button inside a GET form is now detected as a pager and its form fields are turned into a URL.
+- When a fetched page's table rows have a different column count from the original, Onward falls back to appending the whole table instead of the mismatched rows.
+- Canvas pixel data is preserved when items are copied from a rendered page (iframe mode).
+- Export and Import buttons in Settings let you back up and restore every setting and rule as a JSON file. The cached rule lists (which can be re-fetched) are never included.
 
 ## [0.1.0] (2026-09-21)
 
