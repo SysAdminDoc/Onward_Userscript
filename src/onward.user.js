@@ -74,6 +74,7 @@
     sourcesTried: 0,       // last refresh attempt, to back off after failures
     sourcesLock: 0,        // { at, id } of the tab refreshing right now (expires after a minute)
     sourcesFormat: 0,      // the LIST_FORMAT the lists were last all stored in (0: 0.1.0's, or never)
+    schema: 1,             // settings version; 0 or absent means 0.1.0 data
   };
   // How rule lists are stored now: packed, indexed by host, general rules apart.
   // An older form is refreshed on the next page load instead of a week later.
@@ -170,6 +171,10 @@
   function loadSettings() {
     const s = {};
     for (const key of Object.keys(DEFAULTS)) if (!HEAVY_KEYS.has(key)) s[key] = store.get(key);
+    if (!s.schema) {
+      s.schema = DEFAULTS.schema;
+      store.set('schema', s.schema);
+    }
     return s;
   }
 
