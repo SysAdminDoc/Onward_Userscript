@@ -900,6 +900,10 @@
       absolutize(it, base);
       // Last, so nothing the repairs above wrote can act on the page either.
       stripInert(it);
+      for (const img of selfAndBelow(it, 'img')) {
+        if (!img.getAttribute('loading')) img.setAttribute('loading', 'lazy');
+        if (!img.getAttribute('decoding')) img.setAttribute('decoding', 'async');
+      }
       out.push(it);
     }
     return out;
