@@ -2037,10 +2037,22 @@
           this.inserted.push(shell);
           this.ours.add(shell);
         } else {
-          this.lastInserted = frag.firstChild;
-          this.inserted.push(...frag.childNodes);
-          for (const n of frag.childNodes) this.ours.add(n);
-          this.anchor.parentNode.insertBefore(frag, this.anchor);
+          const nodes = Array.from(frag.childNodes);
+          this.lastInserted = nodes[0];
+          this.inserted.push(...nodes);
+          for (const n of nodes) this.ours.add(n);
+          const CHUNK = 20;
+          if (nodes.length <= CHUNK) {
+            this.anchor.parentNode.insertBefore(frag, this.anchor);
+          } else {
+            for (let i = 0; i < nodes.length; i += CHUNK) {
+              const chunk = document.createDocumentFragment();
+              for (let j = i; j < i + CHUNK && j < nodes.length; j++) chunk.appendChild(nodes[j]);
+              this.anchor.parentNode.insertBefore(chunk, this.anchor);
+              if (i + CHUNK < nodes.length) await new Promise((r) => (typeof scheduler !== 'undefined' && scheduler.yield) ? scheduler.yield().then(r) : setTimeout(r, 0));
+              if (this.destroyed) break;
+            }
+          }
         }
         release();
         if (this.s.skipOffscreen && this.page >= 3 && this.wrap) {
