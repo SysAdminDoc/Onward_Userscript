@@ -59,6 +59,8 @@
 - A content filter that removes the last item of a page (one Onward tracks) no longer triggers "this site keeps redrawing its list."
 - In a light color scheme, button hover text is now dark (#1e1e2e on #bcc0cc, 9:1 contrast), and the address hover has a light-mode override.
 - Host rules are now split into up to eight buckets (about 400 rules each), so a page on a site with a rule unpacks only one bucket instead of all 3,382 host rules. The first lookup dropped from 5.9 ms to 1.7 ms. Small lists keep one bucket; the store grew from 321 KB to 336 KB, still under the 350 KB budget. Lists stored without buckets still read.
+- A new setting, "Open links on added pages in a new tab", adds `target="_blank"` and `rel="noopener"` to every link on pages Onward loads. Off by default.
+- Settings now carry a schema version. Future changes to the settings shape will migrate from the stored version automatically.
 
 ## [0.1.0] (2026-09-21)
 
