@@ -40,6 +40,91 @@
   const TAG = '[Onward]';
 
   // ---------------------------------------------------------------------------
+  // Localization
+  // ---------------------------------------------------------------------------
+
+  const STRINGS = {
+    en: {
+      pageLoaded: (n, c) => `Page ${n} loaded, ${c} ${c === 1 ? 'item' : 'items'}.`,
+      noMore: 'No more pages.',
+      noContent: 'no content found on the next page',
+      allRepeats: 'The site returned a page we already have. End of results.',
+      stoppedByYou: 'Stopped by you.',
+      resume: 'Resume',
+      loadPage: (n) => `Load page ${n}`,
+      loading: (n, batch) => `Loading page ${n}${batch ? ` (${batch.i} of ${batch.n})` : ''}…`,
+      noMoreItems: 'No more items.',
+      skipFooter: 'Skip to footer',
+      skipFooterMsg: (s) => `Loading waits ${s} s so you can reach the footer.`,
+      stop: 'Stop loading',
+      redrawing: 'This site keeps redrawing its list, so pages can’t be added here.',
+      noGrowth: 'Pages were added but the page isn’t getting longer, so Onward stopped.',
+      timedOut: 'The page didn’t respond.',
+      retry: 'Retry',
+      redirected: 'redirected to another site',
+      enabled: (h) => `Enabled on ${h}`,
+      disabled: (h) => `Disabled on ${h}`,
+      settingsSaved: 'Settings saved and applied.',
+      importDone: 'Settings imported. Reload the page to apply them.',
+      diagCopied: 'Diagnostics copied.',
+      diagFailed: 'Couldn’t copy. Select the text and copy it yourself.',
+      notJson: 'Not valid JSON.',
+      notSettings: 'Not a settings object.',
+      cancel: 'Cancel',
+      save: 'Save',
+      exportBtn: 'Export',
+      importBtn: 'Import',
+      copyDiag: 'Copy diagnostics',
+      updateLists: 'Update rule lists now',
+      loadMore: (n) => `Load ${n} more pages`,
+      runHere: 'Run Onward here anyway',
+      pick: 'Pick next and items',
+      settings: 'Settings',
+      toggle: 'Toggle Onward on this site',
+    },
+    'zh-CN': {
+      pageLoaded: (n, c) => `第 ${n} 页已加载，${c} 个项目。`,
+      noMore: '没有更多页面了。',
+      noContent: '下一页未找到内容',
+      allRepeats: '网站返回了已有的页面。结果结束。',
+      stoppedByYou: '已被您停止。',
+      resume: '继续',
+      loadPage: (n) => `加载第 ${n} 页`,
+      loading: (n, batch) => `正在加载第 ${n} 页${batch ? `（第 ${batch.i} / ${batch.n}）` : ''}…`,
+      noMoreItems: '没有更多项目了。',
+      skipFooter: '跳到页脚',
+      skipFooterMsg: (s) => `加载将等待 ${s} 秒，以便您访问页脚。`,
+      stop: '停止加载',
+      redrawing: '此网站不断重绘其列表，因此无法在此处添加页面。',
+      noGrowth: '页面已添加但页面未变长，Onward 已停止。',
+      timedOut: '页面未响应。',
+      retry: '重试',
+      redirected: '被重定向到其他网站',
+      enabled: (h) => `已在 ${h} 上启用`,
+      disabled: (h) => `已在 ${h} 上禁用`,
+      settingsSaved: '设置已保存并应用。',
+      importDone: '设置已导入。重新加载页面以应用。',
+      diagCopied: '诊断信息已复制。',
+      diagFailed: '无法复制。请选择文本并自行复制。',
+      notJson: '不是有效的 JSON。',
+      notSettings: '不是设置对象。',
+      cancel: '取消',
+      save: '保存',
+      exportBtn: '导出',
+      importBtn: '导入',
+      copyDiag: '复制诊断信息',
+      updateLists: '立即更新规则列表',
+      loadMore: (n) => `加载 ${n} 个更多页面`,
+      runHere: '在此处运行 Onward',
+      pick: '选取下一页和项目',
+      settings: '设置',
+      toggle: '在此网站切换 Onward',
+    },
+  };
+  const lang = (typeof navigator !== 'undefined' && navigator.language || 'en').toLowerCase();
+  const t = STRINGS[lang] || STRINGS[lang.split('-')[0]] || STRINGS.en;
+
+  // ---------------------------------------------------------------------------
   // Settings
   // ---------------------------------------------------------------------------
 
@@ -1521,8 +1606,8 @@
       // A page on its way is dropped rather than landing under the Stop bar.
       if (this.loadCtl) this.loadCtl.abort();
       this.stop(null, 'end', 'user');
-      this.stopBar = this.addBar(null, 'Stopped by you.', 'end', () => this.resume(), 'Resume');
-      announce('Stopped by you.');
+      this.stopBar = this.addBar(null, t.stoppedByYou, 'end', () => this.resume(), t.resume);
+      announce(t.stoppedByYou);
     }
 
     // loadNow: false when the caller loads the pages itself (the menu's commands).
@@ -1863,7 +1948,7 @@
       this.paused = false;
       if (this.retryBar) { this.removeBar(this.retryBar); this.retryBar = null; }
       if (this.manualBar) { this.removeBar(this.manualBar); this.manualBar = null; }
-      const loading = this.addBar(this.next.url, 'Loading page ' + (this.page + 1) + (this.batch ? ` (${this.batch.i} of ${this.batch.n})` : '') + '…', 'loading');
+      const loading = this.addBar(this.next.url, t.loading(this.page + 1, this.batch), 'loading');
       // Stop cancels this load; so does destroy().
       const ctl = new AbortController();
       const cancel = () => ctl.abort();
@@ -1981,7 +2066,7 @@
         // A redirect back to a page already on screen (/page/99 -> /page/1) is the real end.
         if (this.seen.has(stripHash(finalUrl))) {
           this.removeBar(bar);
-          return this.stop('No more pages.');
+          return this.stop(t.noMore);
         }
         // The page being loaded counts as seen for finding its next link, but it
         // only joins 'seen' once it is in: a failed attempt must stay retryable.
@@ -2072,7 +2157,7 @@
         this.replacePager(doc, finalUrl);
         bar.first = this.lastInserted;
         bar.size = this.wrap ? 1 : prepared.length;
-        announce(`Page ${this.page} loaded, ${prepared.length} ${prepared.length === 1 ? 'item' : 'items'}.`);
+        announce(t.pageLoaded(this.page, prepared.length));
         if (below) this.waitForReader();
         this.onPageAppended(url);
         setTimeout(() => { if (!this.destroyed && this.lost()) this.handleLost(); }, 1500);
@@ -2087,7 +2172,7 @@
               if (!this.destroyed && this.next && this.next.url === pfUrl) this.prefetched = Object.assign({ url: pfUrl }, r);
             }).catch(() => {});
           }
-        } else this.stop('No more pages.');
+        } else this.stop(t.noMore);
       } finally {
         dispose();
       }
@@ -2125,7 +2210,7 @@
       }
       if (!el) {
         this.removeBar(bar);
-        return this.stop('No more items.');
+        return this.stop(t.noMoreItems);
       }
       const before = this.container.childElementCount;
       const height = document.documentElement.scrollHeight;
@@ -2228,7 +2313,7 @@
         url && kind !== 'loading' ? h('a', { class: 'url', href: url, title: url }, url) : h('span', { class: 'url' }),
         onRetry ? h('button', { onclick: onRetry }, actionLabel || 'Retry') : null,
         kind === '' ? h('button', { title: 'Scroll to top', onclick: () => (this.scroller || win).scrollTo({ top: 0, behavior: 'smooth' }) }, '↑ Top') : null,
-        kind === '' && this.userStopped ? h('button', { title: 'Carry on loading pages', onclick: () => this.resume() }, 'Resume') : null,
+        kind === '' && this.userStopped ? h('button', { title: 'Carry on loading pages', onclick: () => this.resume() }, t.resume) : null,
         kind === '' && !this.stopped ? h('button', { title: 'Stop loading pages here', onclick: () => this.userStop() }, 'Stop') : null,
         kind === '' && this.opts.onMenu ? h('button', { title: 'Settings and commands', onclick: this.opts.onMenu }, 'Onward…') : null,
         kind === '' || kind === 'manual' ? h('button', { title: 'Jump past the list; loading waits a while', onclick: () => this.skipToFooter() }, 'Skip to footer') : null,
@@ -2439,7 +2524,7 @@
           for (const key of Object.keys(DEFAULTS)) if (!HEAVY_KEYS.has(key)) data[key] = store.get(key);
           const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
           const a = h('a', { href: URL.createObjectURL(blob), download: 'onward-settings.json' }); a.click(); URL.revokeObjectURL(a.href);
-        } }, 'Export'),
+        } }, t.exportBtn),
         h('button', { onclick: () => {
           const inp = h('input', { type: 'file', accept: '.json' });
           inp.addEventListener('change', () => {
@@ -2455,8 +2540,8 @@
             r.readAsText(f);
           });
           inp.click();
-        } }, 'Import'),
-        h('button', { onclick: close }, 'Cancel'), h('button', { class: 'pri', onclick: save }, 'Save')));
+        } }, t.importBtn),
+        h('button', { onclick: close }, t.cancel), h('button', { class: 'pri', onclick: save }, t.save)));
     const bg = h('div', { class: 'bg', onclick: (e) => { if (e.target === bg) close(); } }, panel);
     sr.appendChild(bg);
     document.documentElement.appendChild(host);
@@ -3255,6 +3340,6 @@
 
   return {
     VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, nextUrlChecker, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag, labelKey, formUrl,
+    STRINGS, itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag, labelKey, formUrl,
   };
 });

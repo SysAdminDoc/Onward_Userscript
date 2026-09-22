@@ -955,6 +955,13 @@ test('interleaved table rows (Hacker News style) are all kept, the More row is n
   assert.equal(got.filter((r) => r.querySelector('.morelink')).length, 0, 'More row dropped');
 });
 
+test('localization: zh-CN has every key that en has', () => {
+  const en = Object.keys(O.STRINGS.en).sort();
+  const zh = Object.keys(O.STRINGS['zh-CN']).sort();
+  assert.deepEqual(zh, en, 'zh-CN must have the same keys as en');
+  for (const k of en) assert.equal(typeof O.STRINGS['zh-CN'][k], typeof O.STRINGS.en[k], `${k} type matches`);
+});
+
 test('formUrl: a GET form submit button becomes a URL', () => {
   const d = dom(`<form action="/search" method="GET"><input type="hidden" name="q" value="cats"><input type="hidden" name="page" value="3"><button type="submit" name="go">Next</button></form>`, 'https://example.com/search?q=cats&page=2');
   const btn = d.querySelector('button');
