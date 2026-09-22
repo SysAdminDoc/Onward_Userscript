@@ -955,6 +955,15 @@ test('interleaved table rows (Hacker News style) are all kept, the More row is n
   assert.equal(got.filter((r) => r.querySelector('.morelink')).length, 0, 'More row dropped');
 });
 
+test('prepareItems: newTabLinks adds target=_blank to anchors', () => {
+  const d = dom('<div class="card"><a href="/p/1">Item one</a></div><div class="card"><a href="/p/2">Item two</a><a href="/p/3">Three</a></div>');
+  const items = O.prepareItems(Array.from(d.querySelectorAll('.card')), 'https://example.com/');
+  assert.equal(items[0].querySelector('a').getAttribute('target'), null, 'off by default');
+  for (const it of items) for (const a of it.querySelectorAll('a[href]')) { a.target = '_blank'; a.rel = (a.rel ? a.rel + ' ' : '') + 'noopener'; }
+  assert.equal(items[0].querySelector('a').target, '_blank');
+  assert.ok(items[1].querySelectorAll('a')[1].rel.includes('noopener'));
+});
+
 test('labelKey: a counted button with its count changed to singular still matches', () => {
   const d = dom('<button>Load 5 more posts</button>');
   const btn = d.querySelector('button');

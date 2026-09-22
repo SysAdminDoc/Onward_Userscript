@@ -52,6 +52,7 @@
     mode: 'auto',          // auto | fetch | iframe
     loadPages: 'auto',     // auto | click: load as you scroll, or only when you press the bar's button
     hostLoadPages: {},     // per-host override of loadPages: { host: 'auto' | 'click' }
+    newTabLinks: false,    // open links on added pages in a new tab
     skipFooterMs: 30000,   // how long "Skip to footer" holds loading off
     runOn: 'all',          // all | listed (only the hosts in allowHosts)
     allowHosts: [],
@@ -1964,6 +1965,7 @@
         this.lastPageNodes = Array.from(frag.childNodes);
         // Scripts written for AutoPagerize find added items by this class.
         for (const n of this.lastPageNodes) if (n.nodeType === 1) n.classList.add('autopagerize_page_element');
+        if (this.s.newTabLinks) for (const n of this.lastPageNodes) if (n.querySelectorAll) for (const a of n.querySelectorAll('a[href]')) { a.target = '_blank'; a.rel = (a.rel ? a.rel + ' ' : '') + 'noopener'; }
         this.page++;
         this.setBar(bar, url, 'Page ' + this.page, '');
         const heightBefore = this.metrics().height;
@@ -2312,6 +2314,7 @@
       h('label', {}, 'Wait between page requests (ms)', num('spacing', '100')),
       h('label', {}, 'Show a bar between pages', chk('separators')),
       h('label', {}, 'Update the address bar while scrolling', chk('updateUrl')),
+      h('label', {}, 'Open links on added pages in a new tab', chk('newTabLinks')),
       h('label', {}, 'Loading mode', modeSel),
       h('label', {}, 'Load pages', loadSel),
       h('label', {}, 'Load pages on ' + location.hostname, hostLoadSel),
