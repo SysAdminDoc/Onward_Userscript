@@ -1974,7 +1974,19 @@
         if (!fresh.length || repeatShare >= 0.9) { this.removeBar(bar); return this.stop('The site returned a page we already have. End of results.'); }
         const prepared = prepareItems(fresh, finalUrl);
         const frag = document.createDocumentFragment();
-        for (const it of prepared) frag.appendChild(document.importNode(it, true));
+        for (const it of prepared) {
+          const clone = document.importNode(it, true);
+          const srcCanvases = it.querySelectorAll ? [].concat(it.tagName === 'CANVAS' ? [it] : [], Array.from(it.querySelectorAll('canvas'))) : [];
+          const dstCanvases = clone.querySelectorAll ? [].concat(clone.tagName === 'CANVAS' ? [clone] : [], Array.from(clone.querySelectorAll('canvas'))) : [];
+          for (let c = 0; c < srcCanvases.length && c < dstCanvases.length; c++) {
+            try {
+              const src = srcCanvases[c], dst = dstCanvases[c];
+              dst.width = src.width; dst.height = src.height;
+              dst.getContext('2d').drawImage(src, 0, 0);
+            } catch (e) { /* tainted or no context */ }
+          }
+          frag.appendChild(clone);
+        }
         this.lastPageNodes = Array.from(frag.childNodes);
         // Scripts written for AutoPagerize find added items by this class.
         for (const n of this.lastPageNodes) if (n.nodeType === 1) n.classList.add('autopagerize_page_element');
