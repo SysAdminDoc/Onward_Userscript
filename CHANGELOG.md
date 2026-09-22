@@ -65,6 +65,8 @@
 - When a fetched page's table rows have a different column count from the original, Onward falls back to appending the whole table instead of the mismatched rows.
 - Canvas pixel data is preserved when items are copied from a rendered page (iframe mode).
 - Export and Import buttons in Settings let you back up and restore every setting and rule as a JSON file. The cached rule lists (which can be re-fetched) are never included.
+- Saving settings applies them to the running pager without a reload. Threshold, page cap, bar visibility and URL sync take effect right away; changes to rules, mode or exclusions restart the pager.
+- Images on added pages now get `loading="lazy"` and `decoding="async"`, so the browser defers offscreen images instead of loading them all at once.
 
 ## [0.1.0] (2026-09-21)
 
