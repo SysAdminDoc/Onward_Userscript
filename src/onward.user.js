@@ -1419,6 +1419,7 @@
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
       this.firstItem = content.items[0] || null;
       this.firstKey = this.listFingerprint(content.items);
+      this.tableCols = content.items[0] && content.items[0].tagName === 'TR' ? Math.max(...content.items.map((r) => r.cells ? r.cells.length : 0)) : 0;
       this.startItems = content.items.length;
       this.contentHow = content.how;
       this.firstNext = { how: next.how, score: next.score };
@@ -1957,8 +1958,15 @@
         // only joins 'seen' once it is in: a failed attempt must stay retryable.
         const seenNow = new Set(this.seen).add(stripHash(url)).add(stripHash(finalUrl));
         const next = this.findNextIn(doc, finalUrl, seenNow);
-        const items = extractItems(doc, this, next && next.el);
+        let items = extractItems(doc, this, next && next.el);
         if (!items.length) throw new Error('no content found on the next page');
+        if (this.tableCols && items[0].tagName === 'TR') {
+          const cols = Math.max(...items.map((r) => r.cells ? r.cells.length : 0));
+          if (cols !== this.tableCols) {
+            const box = resolvePath(doc, this.path);
+            if (box) items = [box];
+          }
+        }
         // A page that is (nearly) all repeats is the site sending the same page
         // again; a few repeats (products that moved) are just dropped.
         // Keyed here, before prepareItems() rewrites their URLs, like every other page.
