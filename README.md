@@ -1,6 +1,6 @@
 # Onward
 
-[![Version](https://img.shields.io/badge/version-0.1.0-89b4fa)](https://github.com/SysAdminDoc/Onward_Userscript/releases)
+[![Version](https://img.shields.io/badge/version-0.2.0-89b4fa)](https://github.com/SysAdminDoc/Onward_Userscript/releases)
 [![License](https://img.shields.io/badge/license-MIT-a6e3a1)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Tampermonkey%20%7C%20Violentmonkey-f9e2af)](#install)
 

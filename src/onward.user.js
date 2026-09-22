@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Onward
 // @namespace    https://github.com/SysAdminDoc/Onward_Userscript
-// @version      0.1.0
+// @version      0.2.0
 // @description  Lean auto-pager. Finds the next page on paginated sites and appends it below the current one as you scroll. No rule database needed.
 // @author       SysAdminDoc
 // @license      MIT
@@ -36,7 +36,7 @@
 })(typeof window !== 'undefined' ? window : globalThis, function (win) {
   'use strict';
 
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   const TAG = '[Onward]';
 
   // ---------------------------------------------------------------------------
