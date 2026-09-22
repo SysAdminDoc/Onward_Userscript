@@ -87,6 +87,7 @@ Rule lists in AutoPagerize/wedata format (`url`, `nextLink`, `pageElement`, `ins
 | Show a bar between pages | on | Status bars (loading, errors, end) always show. |
 | Update the address bar while scrolling | on | Uses `history.replaceState`, so the back button isn't flooded. |
 | Open links on added pages in a new tab | off | Adds `target="_blank"` to every link on pages Onward loads. |
+| Prefetch the next page while you read | off | Fetches the next page's HTML as soon as the current one lands, so scrolling to the next page is instant. |
 | Loading mode | auto | `auto` fetches first and falls back to an iframe when needed. |
 | Load pages | as I scroll | "when I click" loads nothing as you scroll. The bar at the end of the list gets a "Load page N" button instead, which keeps the footer in reach. |
 | Load pages on this site | as set above | The same choice for the site you're on only. |
