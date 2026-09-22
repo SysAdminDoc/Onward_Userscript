@@ -1267,7 +1267,7 @@
     @media (prefers-color-scheme: light) {
       .bar { background: linear-gradient(135deg, rgba(239,241,245,.96), rgba(230,233,239,.96)); color: #4c4f69; border-color: rgba(30,102,245,.3); }
       .bar b { color: #1553d0; } .bar a, .bar button { color: #4c4f69; background: rgba(204,208,218,.8); }
-      .bar a:hover, .bar button:hover { background: #bcc0cc; } .bar .url { color: #5c5f77; background: none; }
+      .bar a:hover, .bar button:hover { color: #1e1e2e; background: #bcc0cc; } .bar .url { color: #5c5f77; background: none; } .bar .url:hover { color: #4c4f69; background: none; }
       .bar.err b { color: #b80d33; } .bar.end b { color: #276a19; }
     }
   `;
@@ -1411,8 +1411,8 @@
       this.pagerEl = next.url === null || next.el.tagName === 'LINK' ? null : this.findPager(next.el);
       this.pagerPath = this.pagerEl ? describePath(this.pagerEl) : null;
       this.shape = content.how === 'auto' ? itemShape(content.items) : null;
-      this.firstKey = content.items.length ? itemKey(content.items[0], true) : null;
       this.firstItem = content.items[0] || null;
+      this.firstKey = this.listFingerprint(content.items);
       this.startItems = content.items.length;
       this.contentHow = content.how;
       this.firstNext = { how: next.how, score: next.score };
@@ -1452,6 +1452,8 @@
     /** Scroll past the list and hold loading off for a while, so the footer can be reached. */
     skipToFooter() {
       this.skipUntil = Date.now() + this.s.skipFooterMs;
+      if (this.abort) this.abort.abort();
+      this.abort = new AbortController();
       const m = this.metrics();
       const past = this.listEndBottom(m) - m.top + 1;
       if (this.scroller && this.scroller.isConnected) this.scroller.scrollTop += past;
@@ -1494,6 +1496,7 @@
       if (!this.userStopped || this.destroyed) return;
       this.userStopped = false;
       this.stopped = false;
+      this.busy = false;
       this.endReason = null;
       // Resume means carry on, past a failed page too.
       this.paused = false;
@@ -1640,10 +1643,20 @@
       this.onScroll();
     }
 
+    listFingerprint(items) {
+      const hrefs = [];
+      for (const it of items.slice(0, 5)) {
+        const a = it.matches && it.matches('a[href]') ? it : it.querySelector && it.querySelector('a[href]');
+        if (a) hrefs.push(a.href);
+      }
+      return hrefs.join('\n') || null;
+    }
+
     /** The list Onward pages is still there, starting with the item it started with. */
     sameList() {
       const first = this.firstItem;
-      return !this.listGone() && !!first && first.isConnected && this.container.contains(first) && itemKey(first, true) === this.firstKey;
+      if (this.listGone() || !first || !first.isConnected || !this.container.contains(first)) return false;
+      return this.listFingerprint(Array.from(this.container.children).slice(0, 5)) === this.firstKey;
     }
 
     /** Nothing to add pages to: the list itself (load-more mode), or our place in it, is gone. */
@@ -1653,7 +1666,14 @@
 
     /** Frameworks sometimes redraw the list and throw away what we added. */
     lost() {
-      return !this.anchor.isConnected || (this.lastInserted && !this.lastInserted.isConnected);
+      if (!this.anchor.isConnected) return true;
+      if (this.lastInserted && !this.lastInserted.isConnected) {
+        const prev = this.lastPageNodes && this.lastPageNodes.filter((n) => n.isConnected).pop();
+        if (prev) { this.lastInserted = prev; return false; }
+        if (this.anchor.previousElementSibling) { this.lastInserted = this.anchor.previousElementSibling; return false; }
+        return true;
+      }
+      return false;
     }
 
     handleLost() {
@@ -2015,7 +2035,7 @@
       // A button still busy ("Loading…", disabled, hidden) just after its items render comes back; give it 3 s.
       let el = ready();
       if (!el) {
-        await waitFor(() => !!(el = ready()), 3000);
+        await waitFor(() => !!(el = ready()), 3000, this.ctl && this.ctl.signal);
         if (this.destroyed) return;
       }
       if (!el) {
@@ -2030,7 +2050,7 @@
       const below = this.readerBelowList();
       const release = this.holdAnchoring();
       el.click();
-      const grew = await waitFor(() => this.container.childElementCount > before || document.documentElement.scrollHeight > height + 50, 10000);
+      const grew = await waitFor(() => this.container.childElementCount > before || document.documentElement.scrollHeight > height + 50, 10000, this.ctl && this.ctl.signal);
       release();
       if (this.destroyed) return;
       this.removeBar(bar);
@@ -2174,10 +2194,11 @@
     return null;
   }
 
-  function waitFor(test, ms) {
+  function waitFor(test, ms, signal) {
     return new Promise((resolve) => {
       const t0 = Date.now();
       const tick = () => {
+        if (signal && signal.aborted) return resolve(false);
         if (test()) return resolve(true);
         if (Date.now() - t0 > ms) return resolve(false);
         setTimeout(tick, 200);
@@ -2243,11 +2264,14 @@
     document.body.inert = true;
     const close = () => {
       closeSettings = null;
-      host.remove();
+      if (obs) obs.disconnect();
+      if (host.isConnected) host.remove();
       document.body.inert = wasInert;
       if (opener && opener.isConnected && typeof opener.focus === 'function') opener.focus();
     };
     closeSettings = close;
+    const obs = typeof MutationObserver !== 'undefined' ? new MutationObserver(() => { if (!host.isConnected) close(); }) : null;
+    if (obs) obs.observe(host.parentNode || document.documentElement, { childList: true });
     const save = () => {
       let parsed;
       try { parsed = JSON.parse(rules.value || '[]'); } catch (e) { err.textContent = 'Site rules are not valid JSON: ' + e.message; return; }
@@ -3058,7 +3082,7 @@
     const setPaging = (on) => {
       const p = app.pager;
       if (on) {
-        if (p && p.userStopped) p.resume();
+        if (p && p.userStopped) p.resume(false);
         else if (!p) app.restart();
       } else if (p && !p.stopped) {
         p.userStop();
