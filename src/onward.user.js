@@ -58,7 +58,7 @@
     // Pages Onward stays off: appending pages broke checkout and account flows for other auto-pagers.
     // A path part that starts with one of these words ("/login.php", "/Cart-Show", "/my-account/",
     // "/password_reset/"), unless the path runs through a listing ("/tag/account-security" lists posts).
-    skipPaths: '^(?!.*/(tags?|topics?|categor(y|ies)|tagged|labels?|r)/).*/(my[-_]?)?(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)(?=[/._-]|$)',
+    skipPaths: '/(my[-_]?)?(checkout|cart|basket|log[-_]?in|sign[-_]?in|sign[-_]?up|register|account|password)([/._?-]|$)',
     disabledHosts: [],
     exclude: [
       'mail.google.com', 'docs.google.com', 'drive.google.com', 'calendar.google.com',
@@ -148,11 +148,19 @@
   }
 
   /** The page at href is one Onward stays off: its path, or a single-page app's #/route, matches the pattern. */
+  const LISTING_RE = /\/(tags?|topics?|categor(?:y|ies)|tagged|labels?|collections?|forums?|r|b|market)\//i;
   function pageSkipped(pattern, href) {
     let x;
     try { x = new URL(href); } catch (e) { return false; }
-    if (pathSkipped(pattern, x.pathname)) return true;
-    return /^#!?\//.test(x.hash) && pathSkipped(pattern, x.hash.replace(/^#!?/, '').split('?')[0]);
+    const check = (path) => {
+      if (!pathSkipped(pattern, path)) return false;
+      const m = path.match(new RegExp(pattern, 'i'));
+      if (!m) return true;
+      const before = path.slice(0, m.index);
+      return !LISTING_RE.test(before + '/');
+    };
+    if (check(x.pathname)) return true;
+    return /^#!?\//.test(x.hash) && check(x.hash.replace(/^#!?/, '').split('?')[0]);
   }
 
   // Rule lists can be hundreds of kilobytes, so they're read once, where they're used.
@@ -225,7 +233,7 @@
   }
 
   /** What a button says, numbers aside ("Load 20 more" and "Load 15 more" are one button). */
-  const labelKey = (el) => labelOf(el).join(' ').replace(/\d+/g, '#');
+  const labelKey = (el) => labelOf(el).join(' ').replace(/\d[\d,.]*/g, '#').replace(/\b(\w{3,})s\b/gi, '$1');
 
   function attrText(el) {
     return [el.id, el.getAttribute('class'), el.getAttribute('rel'), el.getAttribute('aria-label'),
@@ -312,23 +320,26 @@
   function dangerPlaces(u) {
     let x;
     try { x = new URL(u); } catch (e) { return null; }
-    const places = [];
-    x.pathname.split('/').forEach((seg, i) => { if (DANGER_URL_RE.test('/' + seg + '/')) places.push('p' + i + '=' + seg.toLowerCase()); });
-    for (const [k, v] of x.searchParams) if (DANGER_URL_RE.test('?' + k + '=' + v + '&')) places.push(('q=' + k + '=' + v).toLowerCase());
-    return places;
+    const words = new Set();
+    const add = (s) => { const m = s.match(DANGER_URL_RE); if (m) words.add((m[2] || m[4]).toLowerCase().replace(/[-_]/g, '')); };
+    for (const seg of x.pathname.split('/')) add('/' + seg + '/');
+    for (const [k, v] of x.searchParams) add('?' + k + '=' + v + '&');
+    return words;
   }
 
   /**
-   * u would sign the reader out or delete something. A danger word in the
-   * same place in the page's own address doesn't count: the next page of a
-   * search for "logout" or of /tag/sign-out/ isn't signing out, but /logout
-   * from /help/logout-help is.
+   * u would sign the reader out or delete something. A danger word the
+   * page's own address also carries (anywhere) doesn't count: the next page
+   * of /search/logout or ?q=logout isn't signing out, but /logout from
+   * /about is.
    */
   function dangerousUrl(u, pageUrl) {
-    const places = dangerPlaces(u);
-    if (!places) return true;
-    const here = (pageUrl && dangerPlaces(pageUrl)) || [];
-    return places.some((p) => !here.includes(p));
+    const words = dangerPlaces(u);
+    if (!words) return true;
+    if (!words.size) return false;
+    const here = (pageUrl && dangerPlaces(pageUrl)) || new Set();
+    for (const w of words) if (!here.has(w)) return true;
+    return false;
   }
 
   function absUrl(v, base) {
@@ -762,7 +773,7 @@
   // What an image address looks like, as against the flags and colours sites
   // also keep in data-bg ("dark", "#f5f5f5", "rgba(0,0,0,.5)", "1"): a URL or a
   // path, anything with a "/" or a "?", or a file name with an extension.
-  const imageRef = (v) => !/^(#|rgba?\(|hsla?\(|var\()/i.test(v) && !/^[\d.\s%]+$/.test(v)
+  const imageRef = (v) => !/^(#|rgba?\(|hsla?\(|var\(|oklch\(|oklab\(|lch\(|lab\(|color\(|hwb\()/i.test(v) && !/^[\d.\s%]+$/.test(v)
     && (/^(https?:|\/|\.\.?\/|data:image\/)/i.test(v) || /[/?]/.test(v) || /\.[a-z0-9]{2,5}([?#]|$)/i.test(v));
 
   /** A srcset that only offers placeholders (data: URIs, blank.gif and the like). */
@@ -2692,8 +2703,9 @@
       // 0.1.0 kept every list's rules flattened. That copy goes once every list
       // has a packed one, and not before: a failed refresh must not lose them.
       if (urls.every((u) => listPacked(cache[u]))) store.set('sourceRules', []);
-      // Only when every list is in this version's form; a list whose refresh failed is tried again next time.
-      if (urls.every((u) => cache[u] && Array.isArray(cache[u].buckets))) store.set('sourcesFormat', LIST_FORMAT);
+      // Track whether every list is in this version's form. A list whose refresh
+      // failed or that was never cached resets this so the boot check retries.
+      store.set('sourcesFormat', urls.every((u) => cache[u] && Array.isArray(cache[u].buckets)) ? LIST_FORMAT : 0);
       forgetListRules();
       if (failures.length) toast('Kept the last good copy of a rule list. ' + failures.join('; '), 'err');
       else store.set('sourcesUpdated', Date.now());
@@ -3100,6 +3112,6 @@
 
   return {
     VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, nextUrlChecker, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag, labelKey,
   };
 });

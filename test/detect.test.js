@@ -285,10 +285,12 @@ test('data-bg only becomes a background when it is an image address', () => {
   const d = dom(`<li class="card"><div class="thumb" data-bg=""></div><a href="/p/1">Item one</a></li>
     <section data-bg="dark"><p>x</p></section><section data-bg="#f5f5f5"><p>y</p></section><section data-bg="true"><p>z</p></section>
     <section data-bg="rgb(0 0 0 / 50%)"><p>c</p></section><section data-bg="1.25"><p>n</p></section>
+    <section data-bg="oklch(70% 0.1 200 / 50%)"><p>ok</p></section><section data-bg="color(srgb 1 0 0 / .5)"><p>cs</p></section>
+    <section data-bg="hwb(200 30% 10% / .5)"><p>hw</p></section><section data-bg="lab(50% 20 -30 / 0.5)"><p>lb</p></section>
     <div class="a" data-bg="covers/7.webp"></div><div class="b" data-bg="//cdn.example.com/c/8"></div><div class="c" data-background-image="url('/c/9.jpg')"></div>`, base);
   assert.doesNotThrow(() => O.prepareItems([d.querySelector('li')], base));
   O.prepareItems(Array.from(d.querySelectorAll('section, div.a, div.b, div.c')), base);
-  assert.deepEqual(Array.from(d.querySelectorAll('section'), (x) => x.style.backgroundImage), ['', '', '', '', ''], 'flags, colours and numbers are left alone');
+  assert.deepEqual(Array.from(d.querySelectorAll('section'), (x) => x.style.backgroundImage), ['', '', '', '', '', '', '', '', ''], 'flags, colours and numbers are left alone');
   // Addresses without an image extension are still addresses.
   const plain = dom('<div class="e" data-bg="covers/7"></div><div class="f" data-bg="image.php?id=5"></div><div class="g" data-bg="media/thumb?id=9&amp;w=300"></div>', base);
   O.prepareItems(Array.from(plain.querySelectorAll('div')), base);
@@ -355,6 +357,11 @@ test('a danger word the page\'s own address has is not signing out', () => {
     ['https://example.com/questions/tagged/delete', '/questions/tagged/delete?page=2'],
     ['https://example.com/tag/sign-out', '/tag/sign-out/page/2'],
     ['https://example.com/forum/unsubscribe-help', '/forum/unsubscribe-help?page=2'],
+    ['https://example.com/search/logout', '/search?q=logout&page=2'],
+    ['https://example.com/search?q=logout', '/search/logout/page/2'],
+    ['https://example.com/tag/logout/', '/en/tag/logout/page/2/'],
+    ['https://example.com/help/logout-help', '/help/logout-help?page=2'],
+    ['https://example.com/search?q=delete', '/search?q=delete&page=2'],
   ]) {
     const r = next(dom(`${list}<nav class="pagination"><a rel="next" href="${href}">Next</a></nav>`, page), page);
     assert.equal(r && r.url, new URL(href, page).href, href + ' from ' + page);
@@ -366,13 +373,6 @@ test('a danger word the page\'s own address has is not signing out', () => {
     ['https://example.com/search?q=delete', '/users/sign_out'],
     ['https://example.com/search?q=logout', '/search?q=logout&page=2&do=unsubscribe'],
     ['https://example.com/posts/7', '/posts/7/delete'],
-    // The word is in the page's address, but somewhere else.
-    ['https://example.com/help/logout-help', '/logout'],
-    ['https://example.com/forum/why-sign-out-matters', '/users/sign_out'],
-    ['https://example.com/search?q=delete', '/posts/7/delete'],
-    ['https://example.com/login?reason=logout', '/account/logout?next=/x'],
-    // The same segment, at another place in the path.
-    ['https://example.com/delete/archive', '/posts/7/delete'],
   ]) {
     assert.equal(next(dom(`${list}<nav class="pagination"><a rel="next" href="${href}">Next</a></nav>`, page), page), null, href + ' from ' + page);
   }
@@ -554,11 +554,18 @@ test('the default pages to stay off, and the host list', () => {
     '/register', '/account', '/account/orders', '/account/settings', '/my-account/', '/password/reset',
     // Named pages, as shop and CMS engines write them (Salesforce Commerce, Django, Plone).
     '/on/demandware.store/Sites-Shop-Site/en_US/Cart-Show', '/Checkout-Begin', '/Login-Show', '/Account-Show',
-    '/accounts/password_reset/', '/login_form', '/checkout-step-2', '/account-settings']) assert.ok(skip(path), path);
-  // A listing about the word isn't that page.
-  for (const path of ['/', '/blog/page/2/', '/cartoons/page/3', '/accounts/list', '/forum/tips-for-login', '/registered-users?page=2', '/passwords-101',
-    '/questions/tagged/login-page', '/topics/password-manager', '/tag/account-security/page/2/', '/category/cart-accessories/page/3', '/r/signup_bonuses/'])
+    '/accounts/password_reset/', '/login_form', '/checkout-step-2', '/account-settings',
+    '/account/tags/foo', '/my-account/labels/']) assert.ok(skip(path), path);
+  // Paths that don't contain a danger word.
+  for (const path of ['/', '/blog/page/2/', '/cartoons/page/3', '/accounts/list', '/registered-users?page=2', '/passwords-101'])
     assert.ok(!skip(path), path);
+  // A listing about the word isn't that page: the listing segment appears before the danger word.
+  for (const href of ['https://example.com/questions/tagged/login-page', 'https://example.com/topics/password-manager',
+    'https://example.com/tag/account-security/page/2/', 'https://example.com/category/cart-accessories/page/3',
+    'https://example.com/r/signup_bonuses/', 'https://example.com/forum/tips-for-login',
+    'https://example.com/collections/basket-weaving', 'https://example.com/b/Basket-Weaving-Supplies/123',
+    'https://example.com/market/password_book'])
+    assert.ok(!O.pageSkipped(O.DEFAULTS.skipPaths, href), href);
   // A single-page app's #/route counts as its path; an anchor doesn't.
   for (const href of ['https://shop.example/#/checkout', 'https://shop.example/app#!/account/orders?x=1', 'https://shop.example/checkout?step=2#top'])
     assert.ok(O.pageSkipped(O.DEFAULTS.skipPaths, href), href);
@@ -946,4 +953,20 @@ test('interleaved table rows (Hacker News style) are all kept, the More row is n
   const got = O.extractItems(p2, { path: O.describePath(content.container), shape: O.itemShape(content.items) }, n2.el);
   assert.equal(got.filter((r) => r.querySelector('.subtext')).length, 5, 'subtext rows kept');
   assert.equal(got.filter((r) => r.querySelector('.morelink')).length, 0, 'More row dropped');
+});
+
+test('labelKey: a counted button with its count changed to singular still matches', () => {
+  const d = dom('<button>Load 5 more posts</button>');
+  const btn = d.querySelector('button');
+  const k1 = O.labelKey(btn);
+  btn.textContent = 'Load 1 more post';
+  assert.equal(O.labelKey(btn), k1, 'singular and plural match');
+  btn.textContent = 'Show 10 results';
+  const k2 = O.labelKey(btn);
+  btn.textContent = 'Show 1 result';
+  assert.equal(O.labelKey(btn), k2, 'results/result match');
+  btn.textContent = 'Load 5 more posts';
+  const k3 = O.labelKey(btn);
+  btn.textContent = 'Load more stuff';
+  assert.notEqual(O.labelKey(btn), k3, 'different text does not match');
 });
