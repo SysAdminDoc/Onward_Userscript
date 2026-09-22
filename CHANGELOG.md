@@ -45,6 +45,20 @@
 - Rules saved with the picker now work on sites that use a port number in their address. Before, the saved rule never matched them.
 - A rule you picked or wrote is used even on a page that looks like Discourse or Flarum.
 - The hidden iframe used for script-rendered pages is now sandboxed. A page that tries to break out of frames can no longer navigate your tab away, and audio or video inside it is muted and paused.
+- A button whose count changes ("Load 5 more posts" to "Load 1 more post") is still the same button. Before, any text change beside the number (plurals, for instance) ended paging.
+- Modern CSS colour values (`oklch()`, `color()`, `hwb()`, `lab()` and friends) are no longer mistaken for image URLs when they appear in a `data-bg` attribute.
+- A danger word that appears anywhere in the page's own address is excused, not only when it's in the same position. The next page of `/search/logout` or `?q=logout` loads now.
+- The listing exception for skipped pages checks whether a listing segment (`/tag/`, `/collections/`, `/forum/` and others) precedes the danger word, instead of whether it appears anywhere in the path. `/account/tags/` is still skipped; `/collections/basket-weaving` is not.
+- A configured rule-list URL with no cached copy triggers a fetch straight away, instead of waiting for the weekly refresh.
+- The list identity check uses link hrefs from the first five items instead of the volatile text key of the first item, so relative timestamps and ad slots no longer tear out every loaded page on a route change.
+- If a framework removes the Settings panel without calling its close function, `body.inert` is restored automatically.
+- Stop and Disable now cancel the 3-second button-ready wait and the 10-second growth wait in load-more mode, so a disabled pager never clicks.
+- Resume clears the busy flag before loading, so Stop followed by Resume in the same event no longer loses the request.
+- The AutoPagerize API's Enable only resumes scrolling instead of forcing an immediate load.
+- Skip to footer cancels any in-flight page load so the footer can't be pushed down after you scrolled past the list.
+- A content filter that removes the last item of a page (one Onward tracks) no longer triggers "this site keeps redrawing its list."
+- In a light color scheme, button hover text is now dark (#1e1e2e on #bcc0cc, 9:1 contrast), and the address hover has a light-mode override.
+- Host rules are now split into up to eight buckets (about 400 rules each), so a page on a site with a rule unpacks only one bucket instead of all 3,382 host rules. The first lookup dropped from 5.9 ms to 1.7 ms. Small lists keep one bucket; the store grew from 321 KB to 336 KB, still under the 350 KB budget. Lists stored without buckets still read.
 
 ## [0.1.0] (2026-09-21)
 

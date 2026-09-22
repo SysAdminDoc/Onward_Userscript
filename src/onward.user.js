@@ -901,10 +901,10 @@
     let input = html;
     const tt = win.trustedTypes;
     if (tt && tt.createPolicy) {
-      try {
-        ttPolicy = ttPolicy || tt.createPolicy('onward', { createHTML: (s) => s });
-        input = ttPolicy.createHTML(html);
-      } catch (e) { /* policy name not allowed; try the plain string */ }
+      if (!ttPolicy) {
+        try { ttPolicy = tt.createPolicy('onward', { createHTML: (s) => s }); } catch (e) { /* name not allowed */ }
+      }
+      if (ttPolicy) try { input = ttPolicy.createHTML(html); } catch (e) { /* nothing */ }
     }
     return new DOMParser().parseFromString(input, 'text/html');
   }
@@ -2657,14 +2657,16 @@
       // Some pages block the async clipboard; a selected textarea still copies.
       const ta = h('textarea', { style: 'position:fixed;top:0;left:0;opacity:0' });
       ta.value = text;
-      // The page's own copy handlers (which may rewrite what's copied) don't get this one.
-      ta.addEventListener('copy', (e) => e.stopPropagation());
+      // The page's copy handlers run at capture phase on document too; block them all.
+      const block = (e) => { if (ta.contains(e.target)) e.stopImmediatePropagation(); };
+      document.addEventListener('copy', block, true);
       // Not in the body: Settings, where this runs, makes the body inert.
       document.documentElement.appendChild(ta);
       ta.select();
       let ok = false;
       try { ok = document.execCommand('copy'); } catch (e2) { /* nothing more to try */ }
       ta.remove();
+      document.removeEventListener('copy', block, true);
       return ok;
     }
   }
