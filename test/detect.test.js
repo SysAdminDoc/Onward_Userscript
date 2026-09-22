@@ -955,6 +955,23 @@ test('interleaved table rows (Hacker News style) are all kept, the More row is n
   assert.equal(got.filter((r) => r.querySelector('.morelink')).length, 0, 'More row dropped');
 });
 
+test('formUrl: a GET form submit button becomes a URL', () => {
+  const d = dom(`<form action="/search" method="GET"><input type="hidden" name="q" value="cats"><input type="hidden" name="page" value="3"><button type="submit" name="go">Next</button></form>`, 'https://example.com/search?q=cats&page=2');
+  const btn = d.querySelector('button');
+  assert.equal(O.formUrl(btn, 'https://example.com/search?q=cats&page=2'), 'https://example.com/search?q=cats&page=3&go=');
+  const d2 = dom('<form method="POST" action="/api"><button type="submit">Go</button></form>', 'https://example.com/');
+  assert.equal(O.formUrl(d2.querySelector('button'), 'https://example.com/'), null, 'POST forms are ignored');
+  const d3 = dom('<button type="submit">Loose</button>', 'https://example.com/');
+  assert.equal(O.formUrl(d3.querySelector('button'), 'https://example.com/'), null, 'no form');
+});
+
+test('findNext: a Next submit button inside a GET form is found', () => {
+  const d = dom(`<ul>${items(5)}</ul><form action="/search" method="GET"><input type="hidden" name="q" value="test"><input type="hidden" name="page" value="2"><input type="submit" value="Next"></form>`, 'https://example.com/search?q=test');
+  const n = next(d, 'https://example.com/search?q=test');
+  assert.ok(n, 'found the form pager');
+  assert.equal(n.url, 'https://example.com/search?q=test&page=2');
+});
+
 test('prepareItems: newTabLinks adds target=_blank to anchors', () => {
   const d = dom('<div class="card"><a href="/p/1">Item one</a></div><div class="card"><a href="/p/2">Item two</a><a href="/p/3">Three</a></div>');
   const items = O.prepareItems(Array.from(d.querySelectorAll('.card')), 'https://example.com/');

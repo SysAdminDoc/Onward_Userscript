@@ -352,6 +352,26 @@
     try { return new URL(v, base).href; } catch (e) { return null; }
   }
 
+  function formUrl(el, base) {
+    const form = el.closest('form');
+    if (!form) return null;
+    const method = (el.getAttribute('formmethod') || form.getAttribute('method') || 'GET').toUpperCase();
+    if (method !== 'GET') return null;
+    const action = el.getAttribute('formaction') || form.getAttribute('action') || base;
+    let u;
+    try { u = new URL(action, base); } catch (e) { return null; }
+    const data = new URLSearchParams();
+    for (const inp of form.elements) {
+      if (inp.disabled || !inp.name) continue;
+      if ((inp.type === 'checkbox' || inp.type === 'radio') && !inp.checked) continue;
+      if (inp.type === 'submit' && inp !== el) continue;
+      if (inp.type === 'image' || inp.type === 'file' || inp.type === 'reset') continue;
+      data.append(inp.name, inp.value);
+    }
+    u.search = data.toString();
+    return u.href;
+  }
+
   // ---------------------------------------------------------------------------
   // Next-page detection
   // ---------------------------------------------------------------------------
@@ -440,7 +460,7 @@
         if (t && MORE_SET.has(t)) { score += MORE_MULTI_RE.test(t) ? 45 : 20; more = true; break; }
         if (!t && ARROWS.test(raw) && raw.length <= 3) { score += 15; break; }
       }
-      const href = el.getAttribute('href');
+      const href = el.getAttribute('href') || (el.type === 'submit' || el.tagName === 'BUTTON' ? formUrl(el, pageUrl) : null);
       const u = acceptUrl(href);
       if (strict && !relNext && !(u && nextByAddress(u, pageUrl))) continue;
       if (u && bumped.has(stripHash(u))) score += 45; // ?page=N+1 or /page/N+1
@@ -3166,6 +3186,6 @@
 
   return {
     VERSION, DEFAULTS, boot, hostListed, pathSkipped, pageSkipped, toggleLists, nextByAddress, nextUrlChecker, cssPath, uniqueSelector, findNext, findContent, describePath, resolvePath, extractItems, prepareItems,
-    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag, labelKey,
+    itemShape, fixLazyImages, absolutize, sniffCharset, decode, normalizeRules, matchRule, matchingRules, fittingRule, chooseRule, acceptRuleList, packJSON, unpackJSON, literalHosts, requiredLiteral, buildListEntry, listRulesFor, candidateRules, forgetListRules, itemKey, pageKeys, splitRepeats, signature, barTag, labelKey, formUrl,
   };
 });
